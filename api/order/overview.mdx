@@ -1,0 +1,353 @@
+---
+title: Order Service API
+description: REST API for managing customer orders and order items
+---
+
+<Note>
+  The Order Service is currently under active development. This documentation describes the planned API endpoints and data models based on the technical specification.
+</Note>
+
+## Overview
+
+The Order Service is the entry point for new purchases in the StreamLine Logistics platform. It validates customer data, creates order records, and orchestrates communication with the Inventory and Tracking services to complete the order fulfillment process.
+
+**Base URL**: `http://localhost:8090`
+
+**Database**: PostgreSQL (orderdb)
+
+**Service Port**: 8090
+
+## Architecture
+
+The Order Service is built using:
+- **Spring Boot** with Spring Web MVC
+- **Spring Data JPA** for PostgreSQL integration
+- **Spring Cloud OpenFeign** for inter-service communication
+- **Eureka Client** for service discovery
+- **PostgreSQL** for transactional data storage
+
+## Data Models
+
+### Order
+
+Represents a customer order with its metadata and status.
+
+```java
+public class Order {
+    private Long id;              // Primary key
+    private String orderNumber;   // UUID for public tracking
+    private Long customerId;      // Customer reference
+    private LocalDateTime orderDate;
+    private OrderStatus status;   // Order lifecycle status
+    private BigDecimal totalPrice;
+    private List<OrderItem> items;
+}
+```
+
+**Order Status Values**:
+- `PENDING_CHECK` - Initial state, awaiting inventory validation
+- `CONFIRMED` - Inventory confirmed, order accepted
+- `SHIPPED` - Order dispatched to customer
+- `CANCELLED` - Order cancelled
+
+### OrderItem
+
+Represents individual products within an order.
+
+```java
+public class OrderItem {
+    private Long id;
+    private Long productId;          // Reference to inventory product
+    private Integer quantity;
+    private BigDecimal priceAtPurchase;  // Locked price at order time
+}
+```
+
+<Note>
+  The `priceAtPurchase` field captures the product price at the moment of purchase, ensuring price consistency even if product prices change later.
+</Note>
+
+## Planned API Endpoints
+
+### Create Order
+
+Creates a new order and initiates the fulfillment workflow.
+
+```http
+POST /api/orders
+```
+
+**Request Body**:
+
+```json
+{
+  "customerId": 12345,
+  "items": [
+    {
+      "productId": 101,
+      "quantity": 2
+    },
+    {
+      "productId": 205,
+      "quantity": 1
+    }
+  ]
+}
+```
+
+**Response**:
+
+```json
+{
+  "id": 1,
+  "orderNumber": "a3f7c8e9-1234-5678-9abc-def012345678",
+  "customerId": 12345,
+  "orderDate": "2026-03-08T14:30:00",
+  "status": "PENDING_CHECK",
+  "totalPrice": 149.97,
+  "items": [
+    {
+      "id": 1,
+      "productId": 101,
+      "quantity": 2,
+      "priceAtPurchase": 49.99
+    },
+    {
+      "id": 2,
+      "productId": 205,
+      "quantity": 1,
+      "priceAtPurchase": 49.99
+    }
+  ]
+}
+```
+
+**Workflow**:
+1. Order Service receives the request and creates order with `PENDING_CHECK` status
+2. Calls Inventory Service via OpenFeign to validate and reserve stock
+3. If stock available, calls Tracking Service to initialize shipment
+4. Updates order status to `CONFIRMED` and returns response
+
+### Get Order by ID
+
+Retrieves order details by internal ID.
+
+```http
+GET /api/orders/{id}
+```
+
+**Response**:
+
+```json
+{
+  "id": 1,
+  "orderNumber": "a3f7c8e9-1234-5678-9abc-def012345678",
+  "customerId": 12345,
+  "orderDate": "2026-03-08T14:30:00",
+  "status": "CONFIRMED",
+  "totalPrice": 149.97,
+  "items": []
+}
+```
+
+### Get Order by Order Number
+
+Retrieves order using the public-facing order number (UUID).
+
+```http
+GET /api/orders/number/{orderNumber}
+```
+
+**Response**: Same as Get Order by ID
+
+### List Orders by Customer
+
+Retrieves all orders for a specific customer.
+
+```http
+GET /api/orders/customer/{customerId}
+```
+
+**Response**:
+
+```json
+[
+  {
+    "id": 1,
+    "orderNumber": "a3f7c8e9-1234-5678-9abc-def012345678",
+    "customerId": 12345,
+    "orderDate": "2026-03-08T14:30:00",
+    "status": "CONFIRMED",
+    "totalPrice": 149.97
+  }
+]
+```
+
+### Update Order Status
+
+Updates the status of an existing order.
+
+```http
+PUT /api/orders/{id}/status
+```
+
+**Request Body**:
+
+```json
+{
+  "status": "SHIPPED"
+}
+```
+
+**Response**:
+
+```json
+{
+  "id": 1,
+  "orderNumber": "a3f7c8e9-1234-5678-9abc-def012345678",
+  "status": "SHIPPED"
+}
+```
+
+### Cancel Order
+
+Cancels an order if it hasn't been shipped.
+
+```http
+POST /api/orders/{id}/cancel
+```
+
+**Response**:
+
+```json
+{
+  "id": 1,
+  "status": "CANCELLED",
+  "message": "Order cancelled successfully"
+}
+```
+
+## Inter-Service Communication
+
+The Order Service communicates with other microservices using OpenFeign:
+
+### Inventory Service Integration
+
+**Request to validate stock**:
+
+```java
+// InventoryRequest DTO
+public class InventoryRequest {
+    private List<ItemRequest> items;
+}
+
+public class ItemRequest {
+    private Long productId;
+    private Integer quantity;
+}
+```
+
+**Response from Inventory Service**:
+
+```java
+public class InventoryResponse {
+    private boolean success;
+    private String message;  // Error reason if success=false
+    private List<ProductPrice> prices;
+}
+```
+
+### Tracking Service Integration
+
+**Request to create shipment**:
+
+```java
+public class TrackingRequest {
+    private Long orderId;
+    private Long customerId;
+    private String shippingAddress;
+}
+```
+
+**Response from Tracking Service**:
+
+```java
+public class TrackingResponse {
+    private String trackingNumber;
+    private Date estimatedDelivery;
+}
+```
+
+## Database Schema
+
+PostgreSQL tables:
+
+```sql
+CREATE TABLE orders (
+    id BIGSERIAL PRIMARY KEY,
+    order_number VARCHAR(36) UNIQUE NOT NULL,
+    customer_id BIGINT NOT NULL,
+    order_date TIMESTAMP NOT NULL,
+    status VARCHAR(20) NOT NULL,
+    total_price DECIMAL(10,2) NOT NULL
+);
+
+CREATE TABLE order_items (
+    id BIGSERIAL PRIMARY KEY,
+    order_id BIGINT REFERENCES orders(id),
+    product_id BIGINT NOT NULL,
+    quantity INTEGER NOT NULL,
+    price_at_purchase DECIMAL(10,2) NOT NULL
+);
+```
+
+## Error Handling
+
+The service will return standard HTTP status codes:
+
+- `200 OK` - Successful request
+- `201 Created` - Order created successfully
+- `400 Bad Request` - Invalid request data
+- `404 Not Found` - Order not found
+- `409 Conflict` - Insufficient inventory
+- `500 Internal Server Error` - Server error
+
+**Error Response Format**:
+
+```json
+{
+  "timestamp": "2026-03-08T14:30:00",
+  "status": 409,
+  "error": "Conflict",
+  "message": "Insufficient stock for product ID 101",
+  "path": "/api/orders"
+}
+```
+
+## Configuration
+
+**Application Properties**:
+
+```properties
+server.port=8090
+spring.application.name=order-service
+
+# PostgreSQL Configuration
+spring.datasource.url=jdbc:postgresql://order-db:5432/orderdb
+spring.datasource.username=postgres
+spring.datasource.password=password
+
+# Eureka Configuration
+eureka.client.service-url.defaultZone=http://eureka-server:8761/eureka/
+
+# Config Server
+spring.config.import=optional:configserver:http://config-server:8888
+```
+
+## Next Steps
+
+Once implemented, the Order Service will provide:
+- Complete order lifecycle management
+- ACID transaction guarantees via PostgreSQL
+- Seamless integration with Inventory and Tracking services
+- RESTful API accessible through the API Gateway at port 8080

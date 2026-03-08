@@ -1,0 +1,789 @@
+---
+title: 'Inventory Service'
+description: 'Product catalog and stock management with hexagonal architecture'
+icon: 'boxes-stacked'
+---
+
+## Overview
+
+The Inventory Service manages the product catalog and stock levels. It implements stock reservation logic to prevent overselling and maintains product information including SKUs, prices, and availability.
+
+<Info>
+  **Port:** 9090 | **Database:** MySQL (inventorydb) | **Eureka Name:** msvc-inventory
+</Info>
+
+## Hexagonal Architecture Implementation
+
+The Inventory Service is the **most complete implementation** of hexagonal architecture in the StreamLine platform. It serves as the reference implementation for the ports and adapters pattern.
+
+### Architecture Layers
+
+<Tabs>
+  <Tab title="Domain Layer">
+    The domain layer contains pure business logic with zero framework dependencies.
+
+    **Entities:**
+    - `Product` - Product information (immutable)
+    - `Stock` - Stock quantities and reservations (immutable)
+    - `ProductDetails` - Aggregate combining Product and Stock
+
+    **Value Objects:**
+    - `Sku` - Stock Keeping Unit identifier
+    - `Price` - Money value with validation
+
+    **Key Characteristics:**
+    - All entities are immutable
+    - State changes return new instances
+    - Business rules enforced in domain objects
+    - Rich domain model (behavior + data)
+  </Tab>
+
+  <Tab title="Application Layer">
+    The application layer orchestrates domain objects through use cases.
+
+    **Input Ports (Interfaces):**
+    - `CreateProductUseCase` - Create new products
+    - `GetProductDetailsUseCase` - Query products
+    - `UpdateStockUseCase` - Modify stock levels
+
+    **Output Ports (Interfaces):**
+    - `ProductRepository` - Product persistence
+    - `StockRepository` - Stock persistence
+
+    **Services:**
+    - `CreateProductService` - Product creation logic
+    - `GetProductService` - Product retrieval logic  
+    - `UpdateStockService` - Stock management logic
+  </Tab>
+
+  <Tab title="Infrastructure Layer">
+    The infrastructure layer implements ports with concrete adapters.
+
+    **Input Adapters:**
+    - `ProductController` - REST API endpoints
+
+    **Output Adapters:**
+    - `ProductRepositoryAdapter` - JPA implementation
+    - `StockRepositoryAdapter` - JPA implementation
+
+    **Persistence:**
+    - `ProductEntity` - JPA entity
+    - `StockEntity` - JPA entity
+    - `JpaProductRepository` - Spring Data interface
+    - `JpaStockRepository` - Spring Data interface
+  </Tab>
+</Tabs>
+
+## Domain Model
+
+### Product Entity
+
+The `Product` entity represents a product in the inventory system with immutable state:
+
+```java
+package com.microservice.inventory.domain.model;
+
+import com.microservice.inventory.domain.valueobject.Price;
+import com.microservice.inventory.domain.valueobject.Sku;
+
+/**
+ * Represents a product in the inventory system.
+ * Immutable entity with SKU, name, description, and price.
+ */
+public class Product {
+    private final Long id;
+    private final Sku sku;
+    private final String name;
+    private final String description;
+    private final Price price;
+
+    public Product(Long id, Sku sku, String name, 
+                   String description, Price price) {
+        validateName(name);
+        this.id = id;
+        this.sku = sku;
+        this.name = name;
+        this.description = description;
+        this.price = price;
+    }
+
+    // State changes return new instances
+    public Product updatePrice(Price newPrice) {
+        return new Product(this.id, this.sku, this.name, 
+                          this.description, newPrice);
+    }
+
+    public Product updateName(String newName) {
+        validateName(newName);
+        return new Product(this.id, this.sku, newName, 
+                          this.description, this.price);
+    }
+
+    private void validateName(String name) {
+        if (name == null || name.isBlank()) {
+            throw new DomainException("Nombre inválido");
+        }
+    }
+
+    // Getters...
+}
+```
+
+<Accordion title="Why Immutability?">
+  Immutable domain objects provide several benefits:
+  - **Thread safety**: No concurrent modification issues
+  - **Predictability**: State can't change unexpectedly
+  - **Audit trail**: Each state change is explicit
+  - **Easier testing**: No hidden side effects
+  - **Event sourcing ready**: Natural fit for event-driven architectures
+</Accordion>
+
+### Stock Entity
+
+The `Stock` entity manages inventory quantities with sophisticated reservation logic:
+
+```java
+package com.microservice.inventory.domain.model;
+
+/**
+ * Manages stock with reservation capabilities.
+ * Tracks total quantity and reserved quantity.
+ */
+public class Stock {
+    private final Long id;
+    private final Long productId;
+    private final int totalQuantity;
+    private final int totalReserved;
+
+    public Stock(Long id, Long productId, 
+                 int totalQuantity, int totalReserved) {
+        validateQuantity(totalQuantity);
+        validateReserved(totalReserved, totalQuantity);
+        this.id = id;
+        this.productId = productId;
+        this.totalQuantity = totalQuantity;
+        this.totalReserved = totalReserved;
+    }
+
+    /**
+     * Reserve stock for an order.
+     * Throws exception if insufficient available stock.
+     */
+    public Stock reserveStock(int amount) {
+        if (amount > available()) {
+            throw new DomainException(
+                "No hay suficiente stock disponible para reservar. " +
+                "Stock disponible: " + available());
+        }
+        validateReserved(amount, totalQuantity);
+        return new Stock(this.id, this.productId, 
+                        this.totalQuantity, 
+                        this.totalReserved + amount);
+    }
+
+    /**
+     * Confirm reservation and reduce total stock.
+     * Used when order is shipped.
+     */
+    public Stock confirmReservation(int amount) {
+        if (amount > totalReserved) {
+            throw new DomainException(
+                "No hay suficiente stock reservado para confirmar");
+        }
+        return new Stock(this.id, this.productId, 
+                        this.totalQuantity - amount,
+                        this.totalReserved - amount);
+    }
+
+    /**
+     * Release reserved stock (e.g., cancelled order).
+     */
+    public Stock releaseStock(int amount) {
+        if (amount > totalReserved) {
+            throw new DomainException(
+                "No hay suficiente stock reservado para liberar");
+        }
+        return new Stock(this.id, this.productId, 
+                        this.totalQuantity, 
+                        this.totalReserved - amount);
+    }
+
+    /**
+     * Add new stock to inventory.
+     */
+    public Stock addStock(int amount) {
+        validateQuantity(amount);
+        return new Stock(this.id, this.productId, 
+                        this.totalQuantity + amount, 
+                        this.totalReserved);
+    }
+
+    // Calculate available stock
+    public int available() {
+        return totalQuantity - totalReserved;
+    }
+
+    private void validateQuantity(int quantity) {
+        if (quantity < 0) {
+            throw new DomainException(
+                "La cantidad no puede ser negativa");
+        }
+    }
+
+    private void validateReserved(int reserved, int total) {
+        if (reserved < 0) {
+            throw new DomainException(
+                "La cantidad reservada no puede ser negativa");
+        }
+        if (reserved > total) {
+            throw new DomainException(
+                "La cantidad reservada no puede ser mayor que la total");
+        }
+    }
+}
+```
+
+<Info>
+  **Stock Reservation Pattern**: The Stock entity prevents overselling by tracking reserved quantities separately from total stock. Available stock = total - reserved.
+</Info>
+
+### Value Objects
+
+<AccordionGroup>
+  <Accordion title="SKU Value Object">
+    ```java
+    package com.microservice.inventory.domain.valueobject;
+
+    /**
+     * Represents the SKU (Stock Keeping Unit) of a product.
+     * Immutable value object with validation.
+     */
+    public record Sku(String value) {
+        public Sku {
+            if (value == null || value.isBlank()) {
+                throw new DomainException(
+                    "El SKU es obligatorio");
+            }
+        }
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Price Value Object">
+    ```java
+    package com.microservice.inventory.domain.valueobject;
+
+    import java.math.BigDecimal;
+
+    /**
+     * Represents a product price with validation.
+     * Enforces positive values and 2 decimal places.
+     */
+    public record Price(BigDecimal amount) {
+        public Price {
+            if (amount == null || 
+                amount.compareTo(BigDecimal.ZERO) <= 0) {
+                throw new DomainException(
+                    "El precio no puede ser nulo o 0");
+            }
+            if (amount.scale() > 2) {
+                throw new DomainException(
+                    "El precio no puede tener más de 2 decimales");
+            }
+        }
+    }
+    ```
+
+    Value objects encapsulate validation logic and business rules, making invalid states impossible.
+  </Accordion>
+</AccordionGroup>
+
+## Application Layer: Use Cases
+
+### Input Ports
+
+Input ports define what the application can do:
+
+```java
+package com.microservice.inventory.application.port.input;
+
+import com.microservice.inventory.domain.model.Product;
+import com.microservice.inventory.domain.model.ProductDetails;
+import com.microservice.inventory.domain.model.Stock;
+
+/**
+ * Use case for creating products.
+ * This is an INPUT PORT (interface) in hexagonal architecture.
+ */
+public interface CreateProductUseCase {
+    /**
+     * Creates a new product with initial stock.
+     * @return Product details including generated ID
+     */
+    ProductDetails createProduct(Product product, Stock stock);
+}
+```
+
+### Output Ports
+
+Output ports define dependencies on external systems:
+
+```java
+package com.microservice.inventory.application.port.output;
+
+import java.util.Optional;
+import com.microservice.inventory.domain.model.Product;
+
+/**
+ * Repository interface for product persistence.
+ * This is an OUTPUT PORT (interface) in hexagonal architecture.
+ * Infrastructure layer provides concrete implementation.
+ */
+public interface ProductRepository {
+    List<Product> findAll();
+    Optional<Product> findById(Long id);
+    Optional<Product> findBySku(String sku);
+    Product save(Product product);
+}
+```
+
+### Application Services
+
+Services implement use cases by orchestrating domain objects:
+
+```java
+package com.microservice.inventory.application.service;
+
+import com.microservice.inventory.application.port.input.CreateProductUseCase;
+import com.microservice.inventory.application.port.output.ProductRepository;
+import com.microservice.inventory.application.port.output.StockRepository;
+
+/**
+ * Service implementing product creation use case.
+ * Orchestrates domain objects and repositories.
+ */
+public class CreateProductService implements CreateProductUseCase {
+    
+    private final ProductRepository productRepository;
+    private final StockRepository stockRepository;
+
+    public CreateProductService(ProductRepository productRepository,
+                               StockRepository stockRepository) {
+        this.productRepository = productRepository;
+        this.stockRepository = stockRepository;
+    }
+
+    @Override
+    public ProductDetails createProduct(Product productModel, 
+                                       Stock stockModel) {
+        // Business rule: SKU must be unique
+        if (productRepository.findBySku(
+                productModel.getSku().value()).isPresent()) {
+            throw new ApplicationException("El SKU ya existe");
+        }
+
+        // Save product and stock
+        Product product = productRepository.save(productModel);
+        Stock stock = stockRepository.save(
+            product.getId(), stockModel);
+
+        return new ProductDetails(product, stock);
+    }
+}
+```
+
+## Infrastructure Layer: Adapters
+
+### REST Controller (Input Adapter)
+
+The controller exposes use cases through HTTP endpoints:
+
+```java
+package com.microservice.inventory.infrastructure.adapter.input.rest;
+
+import org.springframework.web.bind.annotation.*;
+import com.microservice.inventory.application.port.input.CreateProductUseCase;
+
+@RestController
+@RequestMapping("/api/v1/inventory")
+public class ProductController {
+
+    private final GetProductDetailsUseCase getProductDetailsUseCase;
+    private final CreateProductUseCase createProductUseCase;
+    private final UpdateStockService updateStockService;
+
+    // Constructor injection...
+
+    @GetMapping()
+    public ResponseEntity<List<ProductReponseDto>> getProducts() {
+        List<ProductDetails> productDetailsList = 
+            getProductDetailsUseCase.getAllProducts();
+        List<ProductReponseDto> responseList = 
+            productResponseDtoMapper.toResponseList(productDetailsList);
+        return ResponseEntity.ok(responseList);
+    }
+
+    @GetMapping("/{id}")
+    public ResponseEntity<ProductReponseDto> getProductById(
+            @PathVariable Long id) {
+        ProductDetails details = 
+            getProductDetailsUseCase.getProductDetails(id);
+        if (details.product() == null && details.stock() == null) {
+            return ResponseEntity.notFound().build();
+        }
+        ProductReponseDto response = 
+            productResponseDtoMapper.toResponse(details);
+        return ResponseEntity.ok(response);
+    }
+
+    @PostMapping()
+    public ResponseEntity<ProductReponseDto> createProduct(
+            @Valid @RequestBody ProductCreateDto createDto) {
+        Product product = productCreateDtoMapper.toDomain(createDto);
+        Stock stock = stockCreateDtoMapper.toDomain(createDto);
+        
+        ProductDetails savedProduct = 
+            createProductUseCase.createProduct(product, stock);
+        
+        URI location = ServletUriComponentsBuilder
+            .fromCurrentRequest()
+            .path("/{id}")
+            .buildAndExpand(savedProduct.product().getId())
+            .toUri();
+        
+        ProductReponseDto response = 
+            productResponseDtoMapper.toResponse(savedProduct);
+        return ResponseEntity.created(location).body(response);
+    }
+
+    @PostMapping("{id}/addStock")
+    public ResponseEntity<Void> addStock(
+            @PathVariable Long id,
+            @Valid @RequestBody StockQuantityDTO stockQuantityDto) {
+        updateStockService.addStock(id, stockQuantityDto.getAmount());
+        return ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("{id}/reserveStock")
+    public ResponseEntity<Void> reserveStock(
+            @PathVariable Long id,
+            @Valid @RequestBody StockQuantityDTO stockQuantityDto) {
+        updateStockService.reserveStock(id, stockQuantityDto.getAmount());
+        return ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("{id}/releaseStock")
+    public ResponseEntity<Void> releaseStock(
+            @PathVariable Long id,
+            @Valid @RequestBody StockQuantityDTO stockQuantityDto) {
+        updateStockService.releaseStock(id, stockQuantityDto.getAmount());
+        return ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("{id}/consumeStock")
+    public ResponseEntity<Void> consumeStock(
+            @PathVariable Long id,
+            @Valid @RequestBody StockQuantityDTO stockQuantityDto) {
+        updateStockService.consumeStock(id, stockQuantityDto.getAmount());
+        return ResponseEntity.noContent().build();
+    }
+}
+```
+
+### Repository Adapter (Output Adapter)
+
+The repository adapter implements the output port using JPA:
+
+```java
+package com.microservice.inventory.infrastructure.adapter.output.persistence.Product;
+
+import org.springframework.stereotype.Component;
+import com.microservice.inventory.application.port.output.ProductRepository;
+import com.microservice.inventory.domain.model.Product;
+
+/**
+ * JPA implementation of ProductRepository port.
+ * Translates between domain model and JPA entities.
+ */
+@Component
+public class ProductRepositoryAdapter implements ProductRepository {
+
+    private final JpaProductRepository jpaProductRepository;
+    private final ProductEntityMapper productEntityMapper;
+
+    public ProductRepositoryAdapter(
+            JpaProductRepository jpaProductRepository,
+            ProductEntityMapper productEntityMapper) {
+        this.jpaProductRepository = jpaProductRepository;
+        this.productEntityMapper = productEntityMapper;
+    }
+
+    @Override
+    public Optional<Product> findById(Long id) {
+        return jpaProductRepository.findById(id)
+            .map(productEntityMapper::toDomain);
+    }
+
+    @Override
+    public Optional<Product> findBySku(String sku) {
+        return jpaProductRepository.findBySku(sku)
+            .map(productEntityMapper::toDomain);
+    }
+
+    @Override
+    public Product save(Product productModel) {
+        ProductEntity newProductEntity = ProductEntity.builder()
+            .sku(productModel.getSku().value())
+            .name(productModel.getName())
+            .description(productModel.getDescription())
+            .price(productModel.getPrice().amount())
+            .build();
+               
+        ProductEntity savedEntity = 
+            jpaProductRepository.save(newProductEntity);
+        return productEntityMapper.toDomain(savedEntity);    
+    }
+
+    @Override
+    public List<Product> findAll() {
+        List<ProductEntity> productEntities = 
+            jpaProductRepository.findAll();
+        return productEntityMapper.toDomainList(productEntities);
+    }
+}
+```
+
+<Warning>
+  **Layer Separation**: Notice how the adapter translates between `ProductEntity` (infrastructure concern) and `Product` (domain model). The domain layer never knows about JPA or databases.
+</Warning>
+
+## API Endpoints
+
+Base URL: `http://localhost:9090/api/v1/inventory`
+
+### Product Management
+
+<AccordionGroup>
+  <Accordion title="GET / - List all products">
+    Returns all products with their stock information.
+
+    **Response:**
+    ```json
+    [
+      {
+        "id": 1,
+        "sku": "LAPTOP-DELL-XPS15",
+        "name": "Dell XPS 15",
+        "description": "15-inch laptop with Intel i7",
+        "price": 1299.99,
+        "totalQuantity": 50,
+        "reservedQuantity": 5,
+        "availableQuantity": 45
+      }
+    ]
+    ```
+  </Accordion>
+
+  <Accordion title="GET /{id} - Get product details">
+    Retrieves a specific product by ID with stock information.
+
+    **Path Parameters:**
+    - `id` (Long) - Product ID
+
+    **Response:** 200 OK or 404 Not Found
+  </Accordion>
+
+  <Accordion title="POST / - Create new product">
+    Creates a new product with initial stock.
+
+    **Request Body:**
+    ```json
+    {
+      "sku": "MOUSE-LOGITECH-MX",
+      "name": "Logitech MX Master 3",
+      "description": "Wireless mouse",
+      "price": 99.99,
+      "quantity": 100
+    }
+    ```
+
+    **Response:** 201 Created with Location header
+  </Accordion>
+</AccordionGroup>
+
+### Stock Operations
+
+<AccordionGroup>
+  <Accordion title="POST /{id}/addStock - Add stock">
+    Increases total stock quantity.
+
+    **Request Body:**
+    ```json
+    {
+      "amount": 50
+    }
+    ```
+
+    **Response:** 204 No Content
+  </Accordion>
+
+  <Accordion title="POST /{id}/reserveStock - Reserve stock">
+    Reserves stock for an order (prevents overselling).
+
+    **Request Body:**
+    ```json
+    {
+      "amount": 3
+    }
+    ```
+
+    **Response:** 204 No Content or 400 if insufficient stock
+  </Accordion>
+
+  <Accordion title="POST /{id}/releaseStock - Release reservation">
+    Releases previously reserved stock (e.g., cancelled order).
+
+    **Request Body:**
+    ```json
+    {
+      "amount": 2
+    }
+    ```
+
+    **Response:** 204 No Content
+  </Accordion>
+
+  <Accordion title="POST /{id}/consumeStock - Consume reserved stock">
+    Confirms reservation and reduces total stock (order shipped).
+
+    **Request Body:**
+    ```json
+    {
+      "amount": 3
+    }
+    ```
+
+    **Response:** 204 No Content
+  </Accordion>
+</AccordionGroup>
+
+## Database Configuration
+
+```yaml
+spring:
+  application:
+    name: msvc-inventory
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://inventory_db:3306/inventorydb
+    username: root
+    password: password
+  jpa:
+    hibernate:
+      ddl-auto: create
+    database: mysql
+    database-platform: org.hibernate.dialect.MySQLDialect
+```
+
+<Info>
+  The service connects to MySQL running in Docker container `inventory_db` on port 3306.
+</Info>
+
+## Package Structure
+
+```text
+com.microservice.inventory/
+├── MicroserviceInventoryApplication.java
+├── domain/
+│   ├── model/
+│   │   ├── Product.java
+│   │   ├── Stock.java
+│   │   └── ProductDetails.java
+│   ├── valueobject/
+│   │   ├── Sku.java
+│   │   └── Price.java
+│   └── exception/
+│       └── DomainException.java
+├── application/
+│   ├── port/
+│   │   ├── input/
+│   │   │   ├── CreateProductUseCase.java
+│   │   │   ├── GetProductDetailsUseCase.java
+│   │   │   └── UpdateStockUseCase.java
+│   │   └── output/
+│   │       ├── ProductRepository.java
+│   │       └── StockRepository.java
+│   ├── service/
+│   │   ├── CreateProductService.java
+│   │   ├── GetProductService.java
+│   │   └── UpdateStockService.java
+│   ├── dto/
+│   │   ├── ProductCreateDto.java
+│   │   ├── ProductReponseDto.java
+│   │   └── StockQuantityDTO.java
+│   ├── mapper/
+│   │   └── ProductResponseDtoMapper.java
+│   └── exception/
+│       └── ApplicationException.java
+└── infrastructure/
+    ├── adapter/
+    │   ├── input/
+    │   │   └── rest/
+    │   │       ├── ProductController.java
+    │   │       └── mapper/
+    │   │           ├── ProductCreateDtoMapper.java
+    │   │           └── StockCreateDtoMapper.java
+    │   └── output/
+    │       └── persistence/
+    │           ├── Product/
+    │           │   ├── ProductEntity.java
+    │           │   ├── JpaProductRepository.java
+    │           │   └── ProductRepositoryAdapter.java
+    │           ├── Stock/
+    │           │   ├── StockEntity.java
+    │           │   ├── JpaStockRepository.java
+    │           │   └── StockRepositoryAdapter.java
+    │           └── mappers/
+    │               ├── ProductEntityMapper.java
+    │               └── StockEntityMapper.java
+    └── config/
+```
+
+## Key Design Patterns
+
+<CardGroup cols={2}>
+  <Card title="Hexagonal Architecture" icon="hexagon">
+    Clean separation between domain, application, and infrastructure layers with ports and adapters.
+  </Card>
+
+  <Card title="Immutable Entities" icon="lock">
+    All domain objects are immutable. State changes create new instances.
+  </Card>
+
+  <Card title="Repository Pattern" icon="database">
+    Abstract data access through repository interfaces (output ports).
+  </Card>
+
+  <Card title="Value Objects" icon="gem">
+    Encapsulate validation logic in immutable value objects (Sku, Price).
+  </Card>
+</CardGroup>
+
+## Best Practices Demonstrated
+
+<Check>**Domain-Driven Design**: Rich domain model with behavior, not anemic data structures</Check>
+<Check>**Dependency Inversion**: Infrastructure depends on domain, not vice versa</Check>
+<Check>**Single Responsibility**: Each class has one reason to change</Check>
+<Check>**Fail Fast**: Validation in constructors prevents invalid states</Check>
+<Check>**Testability**: Pure domain logic can be tested without Spring or databases</Check>
+
+## Related Services
+
+<CardGroup cols={2}>
+  <Card title="Order Service" icon="file-invoice" href="/microservices/order-service">
+    Calls Inventory Service to validate and reserve stock
+  </Card>
+  <Card title="Architecture Overview" icon="sitemap" href="/microservices/overview">
+    Learn about hexagonal architecture principles
+  </Card>
+</CardGroup>

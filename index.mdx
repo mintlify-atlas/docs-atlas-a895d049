@@ -1,97 +1,73 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: "Welcome to StreamLine Logistics"
+description: "A microservices-based logistics platform for managing orders, inventory, and package tracking"
 ---
 
-## Setting up
-
-Get your documentation site up and running in minutes.
-
 <Card
-  title="Start here"
+  title="Get started in minutes"
   icon="rocket"
   href="/quickstart"
   horizontal
 >
-  Follow our three step quickstart guide.
+  Deploy the complete microservices platform with Docker Compose
 </Card>
 
-## Make it yours
+## Core Features
 
-Design a docs site that looks great and empowers your users.
+StreamLine Logistics is a production-ready microservices architecture built with Spring Boot, demonstrating modern cloud-native patterns for logistics and e-commerce applications.
 
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+<CardGroup cols={2}>
+  <Card title="Microservices Architecture" icon="grid" href="/architecture">
+    Independent services for orders, inventory, and tracking with clean separation of concerns
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  <Card title="Service Discovery" icon="compass" href="/infrastructure/eureka-server">
+    Netflix Eureka for automatic service registration and discovery
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+  <Card title="API Gateway" icon="gateway" href="/infrastructure/api-gateway">
+    Unified entry point for all client requests with routing and load balancing
   </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  <Card title="Hexagonal Architecture" icon="hexagon" href="/microservices/overview">
+    Ports and adapters pattern for clean, testable, and maintainable code
   </Card>
-</Columns>
+</CardGroup>
 
-## Create beautiful pages
+## Technology Stack
 
-Everything you need to create world-class documentation.
+<CardGroup cols={3}>
+  <Card title="Spring Boot" icon="leaf">
+    Modern Java framework for building production-ready microservices
+  </Card>
+  <Card title="Docker" icon="docker">
+    Containerization with Docker Compose for easy deployment
+  </Card>
+  <Card title="Multi-Database" icon="database">
+    PostgreSQL, MySQL, and MongoDB for polyglot persistence
+  </Card>
+</CardGroup>
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
-  </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
-  </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
-  </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
-  </Card>
-</Columns>
+## Microservices
 
-## Need inspiration?
+Explore the independent services that power the platform.
 
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+<CardGroup cols={3}>
+  <Card title="Order Service" icon="shopping-cart" href="/microservices/order-service">
+    Manages customer orders and order lifecycle
+  </Card>
+  <Card title="Inventory Service" icon="boxes-stacked" href="/microservices/inventory-service">
+    Controls product stock and inventory operations
+  </Card>
+  <Card title="Tracking Service" icon="location-dot" href="/microservices/tracking-service">
+    Real-time package tracking and shipment events
+  </Card>
+</CardGroup>
+
+## Quick Links
+
+<CardGroup cols={2}>
+  <Card title="Setup Guide" icon="wrench" href="/setup/installation">
+    Complete installation and configuration instructions
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/inventory/overview">
+    Explore the REST APIs for each microservice
+  </Card>
+</CardGroup>

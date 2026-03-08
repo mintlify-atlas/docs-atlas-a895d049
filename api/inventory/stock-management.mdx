@@ -1,0 +1,441 @@
+---
+title: 'Stock Management'
+description: 'Manage stock levels with add, reserve, release, and consume operations'
+---
+
+## Overview
+
+The Stock Management API provides atomic operations for managing product stock levels. These endpoints support the complete lifecycle of inventory management from adding new stock to consuming it during order fulfillment.
+
+## Stock Operations Workflow
+
+<Steps>
+  <Step title="Add Stock">
+    Receive new inventory shipments and increase available stock
+  </Step>
+  <Step title="Reserve Stock">
+    When an order is placed, reserve stock to prevent overselling
+  </Step>
+  <Step title="Consume Stock (Order Fulfilled)">
+    When the order ships, consume the reserved stock permanently
+  </Step>
+  <Step title="Release Stock (Order Cancelled)">
+    If an order is cancelled, release reserved stock back to available inventory
+  </Step>
+</Steps>
+
+---
+
+## Add Stock
+
+<RequestExample>
+```bash cURL
+curl -X POST http://localhost:8081/api/v1/inventory/1/addStock \
+  -H "Content-Type: application/json" \
+  -d '{
+    "amount": 100
+  }'
+```
+</RequestExample>
+
+Increases the available stock quantity for a product. Use this endpoint when receiving new inventory shipments or restocking products.
+
+**POST** `/api/v1/inventory/{id}/addStock`
+
+### Path Parameters
+
+<ParamField path="id" type="long" required>
+  The unique identifier of the product to add stock to
+</ParamField>
+
+### Request Body
+
+<ParamField body="amount" type="integer" required>
+  The quantity of stock to add. Must be zero or positive.
+</ParamField>
+
+### Request Example
+
+```json
+{
+  "amount": 100
+}
+```
+
+### Response
+
+<ResponseField name="status" type="string">
+  Returns HTTP 204 (No Content) on success
+</ResponseField>
+
+### Example Scenario
+
+<CodeGroup>
+```bash Initial State
+# Product ID 1 has 50 units available
+GET /api/v1/inventory/1
+{
+  "sku": "PROD-001",
+  "availableStock": 50
+}
+```
+
+```bash Add Stock
+# Add 100 units to the product
+POST /api/v1/inventory/1/addStock
+{
+  "amount": 100
+}
+# Returns: 204 No Content
+```
+
+```bash Final State
+# Product now has 150 units available
+GET /api/v1/inventory/1
+{
+  "sku": "PROD-001",
+  "availableStock": 150
+}
+```
+</CodeGroup>
+
+---
+
+## Reserve Stock
+
+<RequestExample>
+```bash cURL
+curl -X POST http://localhost:8081/api/v1/inventory/1/reserveStock \
+  -H "Content-Type: application/json" \
+  -d '{
+    "amount": 5
+  }'
+```
+</RequestExample>
+
+Reserves stock for a pending order. This operation decreases available stock without permanently removing it, preventing overselling while orders are being processed.
+
+**POST** `/api/v1/inventory/{id}/reserveStock`
+
+### Path Parameters
+
+<ParamField path="id" type="long" required>
+  The unique identifier of the product to reserve stock from
+</ParamField>
+
+### Request Body
+
+<ParamField body="amount" type="integer" required>
+  The quantity of stock to reserve. Must be zero or positive. Cannot exceed available stock.
+</ParamField>
+
+### Request Example
+
+```json
+{
+  "amount": 5
+}
+```
+
+### Response
+
+<ResponseField name="status" type="string">
+  Returns HTTP 204 (No Content) on success
+</ResponseField>
+
+### Example Scenario
+
+<CodeGroup>
+```bash Initial State
+# Product has 150 units available
+GET /api/v1/inventory/1
+{
+  "sku": "PROD-001",
+  "availableStock": 150
+}
+```
+
+```bash Reserve Stock
+# Reserve 5 units for an order
+POST /api/v1/inventory/1/reserveStock
+{
+  "amount": 5
+}
+# Returns: 204 No Content
+```
+
+```bash Final State
+# Available stock reduced by 5 units
+GET /api/v1/inventory/1
+{
+  "sku": "PROD-001",
+  "availableStock": 145
+}
+```
+</CodeGroup>
+
+<Warning>
+  If the requested amount exceeds available stock, the operation will fail. Always check available stock before reserving.
+</Warning>
+
+---
+
+## Release Stock
+
+<RequestExample>
+```bash cURL
+curl -X POST http://localhost:8081/api/v1/inventory/1/releaseStock \
+  -H "Content-Type: application/json" \
+  -d '{
+    "amount": 5
+  }'
+```
+</RequestExample>
+
+Releases previously reserved stock back to available inventory. Use this endpoint when an order is cancelled or a reservation expires.
+
+**POST** `/api/v1/inventory/{id}/releaseStock`
+
+### Path Parameters
+
+<ParamField path="id" type="long" required>
+  The unique identifier of the product to release stock for
+</ParamField>
+
+### Request Body
+
+<ParamField body="amount" type="integer" required>
+  The quantity of stock to release. Must be zero or positive.
+</ParamField>
+
+### Request Example
+
+```json
+{
+  "amount": 5
+}
+```
+
+### Response
+
+<ResponseField name="status" type="string">
+  Returns HTTP 204 (No Content) on success
+</ResponseField>
+
+### Example Scenario
+
+<CodeGroup>
+```bash Initial State
+# Product has 145 units available (5 reserved)
+GET /api/v1/inventory/1
+{
+  "sku": "PROD-001",
+  "availableStock": 145
+}
+```
+
+```bash Release Stock
+# Order cancelled - release 5 reserved units
+POST /api/v1/inventory/1/releaseStock
+{
+  "amount": 5
+}
+# Returns: 204 No Content
+```
+
+```bash Final State
+# Available stock increased by 5 units
+GET /api/v1/inventory/1
+{
+  "sku": "PROD-001",
+  "availableStock": 150
+}
+```
+</CodeGroup>
+
+---
+
+## Consume Stock
+
+<RequestExample>
+```bash cURL
+curl -X POST http://localhost:8081/api/v1/inventory/1/consumeStock \
+  -H "Content-Type: application/json" \
+  -d '{
+    "amount": 5
+  }'
+```
+</RequestExample>
+
+Permanently reduces stock when an order is fulfilled and shipped. This operation finalizes the stock reduction that was initially reserved.
+
+**POST** `/api/v1/inventory/{id}/consumeStock`
+
+### Path Parameters
+
+<ParamField path="id" type="long" required>
+  The unique identifier of the product to consume stock from
+</ParamField>
+
+### Request Body
+
+<ParamField body="amount" type="integer" required>
+  The quantity of stock to consume. Must be zero or positive.
+</ParamField>
+
+### Request Example
+
+```json
+{
+  "amount": 5
+}
+```
+
+### Response
+
+<ResponseField name="status" type="string">
+  Returns HTTP 204 (No Content) on success
+</ResponseField>
+
+### Example Scenario
+
+<CodeGroup>
+```bash Initial State
+# Product has 145 units available (5 reserved)
+GET /api/v1/inventory/1
+{
+  "sku": "PROD-001",
+  "availableStock": 145
+}
+```
+
+```bash Consume Stock
+# Order shipped - consume 5 reserved units
+POST /api/v1/inventory/1/consumeStock
+{
+  "amount": 5
+}
+# Returns: 204 No Content
+```
+
+```bash Final State
+# Available stock remains the same (reserved stock was consumed)
+GET /api/v1/inventory/1
+{
+  "sku": "PROD-001",
+  "availableStock": 145
+}
+```
+</CodeGroup>
+
+<Info>
+  The consume operation typically affects reserved stock, not available stock. The available stock was already reduced during the reserve operation.
+</Info>
+
+---
+
+## Complete Order Lifecycle Example
+
+<Tabs>
+  <Tab title="Happy Path">
+    ```bash
+    # 1. Initial state: 100 units available
+    GET /api/v1/inventory/1
+    Response: { "availableStock": 100 }
+
+    # 2. Customer places order for 3 units
+    POST /api/v1/inventory/1/reserveStock
+    Body: { "amount": 3 }
+    Response: 204 No Content
+
+    # 3. Check stock: 97 units available
+    GET /api/v1/inventory/1
+    Response: { "availableStock": 97 }
+
+    # 4. Order ships - consume the reserved stock
+    POST /api/v1/inventory/1/consumeStock
+    Body: { "amount": 3 }
+    Response: 204 No Content
+
+    # 5. Final state: 97 units available
+    GET /api/v1/inventory/1
+    Response: { "availableStock": 97 }
+    ```
+  </Tab>
+  <Tab title="Cancelled Order">
+    ```bash
+    # 1. Initial state: 100 units available
+    GET /api/v1/inventory/1
+    Response: { "availableStock": 100 }
+
+    # 2. Customer places order for 3 units
+    POST /api/v1/inventory/1/reserveStock
+    Body: { "amount": 3 }
+    Response: 204 No Content
+
+    # 3. Check stock: 97 units available
+    GET /api/v1/inventory/1
+    Response: { "availableStock": 97 }
+
+    # 4. Customer cancels order - release reserved stock
+    POST /api/v1/inventory/1/releaseStock
+    Body: { "amount": 3 }
+    Response: 204 No Content
+
+    # 5. Final state: back to 100 units available
+    GET /api/v1/inventory/1
+    Response: { "availableStock": 100 }
+    ```
+  </Tab>
+  <Tab title="Restocking">
+    ```bash
+    # 1. Initial state: low stock
+    GET /api/v1/inventory/1
+    Response: { "availableStock": 10 }
+
+    # 2. New shipment arrives - add 200 units
+    POST /api/v1/inventory/1/addStock
+    Body: { "amount": 200 }
+    Response: 204 No Content
+
+    # 3. Final state: restocked
+    GET /api/v1/inventory/1
+    Response: { "availableStock": 210 }
+    ```
+  </Tab>
+</Tabs>
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Always reserve before consuming">
+    In a typical order workflow, always call `reserveStock` when the order is placed, then call `consumeStock` when the order is fulfilled. This prevents overselling and maintains accurate inventory counts.
+  </Accordion>
+  
+  <Accordion title="Release stock for cancelled orders">
+    If an order is cancelled after stock has been reserved, always call `releaseStock` to return the inventory to available status. Failing to do this will result in "phantom" reservations that reduce available stock indefinitely.
+  </Accordion>
+  
+  <Accordion title="Handle concurrent requests">
+    The service implements proper concurrency controls, but applications should still handle potential race conditions when multiple orders are placed simultaneously for products with low stock.
+  </Accordion>
+  
+  <Accordion title="Validate stock availability">
+    Before attempting to reserve stock, check the `availableStock` field to ensure sufficient inventory exists. This provides better user experience than waiting for a reservation failure.
+  </Accordion>
+</AccordionGroup>
+
+## Error Handling
+
+All stock management endpoints can return the following errors:
+
+| Status Code | Description | Solution |
+|-------------|-------------|----------|
+| 400 | Invalid request (e.g., negative amount) | Ensure amount is zero or positive |
+| 404 | Product not found | Verify the product ID exists |
+| 409 | Insufficient stock for reservation | Check available stock before reserving |
+| 500 | Internal server error | Retry the request or contact support |
+
+<Warning>
+  Stock operations are atomic and transactional. If an operation fails, no changes are made to the inventory.
+</Warning>

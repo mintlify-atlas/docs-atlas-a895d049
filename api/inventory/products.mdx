@@ -1,0 +1,277 @@
+---
+title: 'Product Management'
+description: 'Create and retrieve product information in the inventory system'
+---
+
+## List All Products
+
+<RequestExample>
+```bash cURL
+curl -X GET http://localhost:8081/api/v1/inventory \
+  -H "Content-Type: application/json"
+```
+</RequestExample>
+
+Retrieves a list of all products in the inventory system with their current stock levels.
+
+**GET** `/api/v1/inventory`
+
+### Response
+
+<ResponseField name="Array" type="ProductReponseDto[]">
+  <Expandable title="ProductReponseDto">
+    <ResponseField name="sku" type="string" required>
+      Unique product identifier (Stock Keeping Unit)
+    </ResponseField>
+    <ResponseField name="name" type="string" required>
+      Product name
+    </ResponseField>
+    <ResponseField name="description" type="string">
+      Detailed product description
+    </ResponseField>
+    <ResponseField name="price" type="number" required>
+      Product price as a decimal value
+    </ResponseField>
+    <ResponseField name="availableStock" type="integer" required>
+      Current available stock quantity (excludes reserved stock)
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Response Example
+
+```json
+[
+  {
+    "sku": "PROD-001",
+    "name": "Laptop Charger",
+    "description": "65W USB-C laptop charger compatible with most devices",
+    "price": 29.99,
+    "availableStock": 150
+  },
+  {
+    "sku": "PROD-002",
+    "name": "Wireless Mouse",
+    "description": "Ergonomic wireless mouse with 2.4GHz connectivity",
+    "price": 19.99,
+    "availableStock": 85
+  },
+  {
+    "sku": "PROD-003",
+    "name": "HDMI Cable",
+    "description": "6ft HDMI 2.1 cable supporting 4K@120Hz",
+    "price": 12.50,
+    "availableStock": 200
+  }
+]
+```
+
+---
+
+## Get Product by ID
+
+<RequestExample>
+```bash cURL
+curl -X GET http://localhost:8081/api/v1/inventory/1 \
+  -H "Content-Type: application/json"
+```
+</RequestExample>
+
+Retrieves detailed information for a specific product by its unique identifier.
+
+**GET** `/api/v1/inventory/{id}`
+
+### Path Parameters
+
+<ParamField path="id" type="long" required>
+  The unique identifier of the product to retrieve
+</ParamField>
+
+### Response
+
+<ResponseField name="sku" type="string" required>
+  Unique product identifier (Stock Keeping Unit)
+</ResponseField>
+<ResponseField name="name" type="string" required>
+  Product name
+</ResponseField>
+<ResponseField name="description" type="string">
+  Detailed product description
+</ResponseField>
+<ResponseField name="price" type="number" required>
+  Product price as a decimal value
+</ResponseField>
+<ResponseField name="availableStock" type="integer" required>
+  Current available stock quantity (excludes reserved stock)
+</ResponseField>
+
+### Response Example
+
+<Tabs>
+  <Tab title="Success (200)">
+    ```json
+    {
+      "sku": "PROD-001",
+      "name": "Laptop Charger",
+      "description": "65W USB-C laptop charger compatible with most devices",
+      "price": 29.99,
+      "availableStock": 150
+    }
+    ```
+  </Tab>
+  <Tab title="Not Found (404)">
+    ```
+    HTTP/1.1 404 Not Found
+    ```
+    
+    Returned when no product exists with the specified ID.
+  </Tab>
+</Tabs>
+
+---
+
+## Create Product
+
+<RequestExample>
+```bash cURL
+curl -X POST http://localhost:8081/api/v1/inventory \
+  -H "Content-Type: application/json" \
+  -d '{
+    "sku": "PROD-004",
+    "name": "Mechanical Keyboard",
+    "description": "RGB mechanical keyboard with blue switches",
+    "price": 89.99,
+    "stock": 50
+  }'
+```
+</RequestExample>
+
+Creates a new product in the inventory system with initial stock.
+
+**POST** `/api/v1/inventory`
+
+### Request Body
+
+<ParamField body="sku" type="string" required>
+  Unique product identifier (Stock Keeping Unit). Must be unique across all products.
+</ParamField>
+<ParamField body="name" type="string" required>
+  Product name. Cannot be blank.
+</ParamField>
+<ParamField body="description" type="string">
+  Detailed product description. Optional.
+</ParamField>
+<ParamField body="price" type="number" required>
+  Product price. Must be a decimal value greater than or equal to 0.0.
+</ParamField>
+<ParamField body="stock" type="integer" required>
+  Initial stock quantity. Must be zero or positive.
+</ParamField>
+
+### Request Example
+
+```json
+{
+  "sku": "PROD-004",
+  "name": "Mechanical Keyboard",
+  "description": "RGB mechanical keyboard with blue switches",
+  "price": 89.99,
+  "stock": 50
+}
+```
+
+### Response
+
+<ResponseField name="sku" type="string">
+  The SKU of the created product
+</ResponseField>
+<ResponseField name="name" type="string">
+  The name of the created product
+</ResponseField>
+<ResponseField name="description" type="string">
+  The description of the created product
+</ResponseField>
+<ResponseField name="price" type="number">
+  The price of the created product
+</ResponseField>
+<ResponseField name="availableStock" type="integer">
+  The initial available stock quantity
+</ResponseField>
+
+### Response Example
+
+<Tabs>
+  <Tab title="Created (201)">
+    ```json
+    {
+      "sku": "PROD-004",
+      "name": "Mechanical Keyboard",
+      "description": "RGB mechanical keyboard with blue switches",
+      "price": 89.99,
+      "availableStock": 50
+    }
+    ```
+    
+    The response includes a `Location` header with the URI of the created resource:
+    ```
+    Location: http://localhost:8081/api/v1/inventory/4
+    ```
+  </Tab>
+  <Tab title="Bad Request (400)">
+    ```json
+    {
+      "timestamp": "2026-03-08T10:30:00.000+00:00",
+      "status": 400,
+      "error": "Bad Request",
+      "message": "Validation failed",
+      "errors": [
+        {
+          "field": "price",
+          "message": "must be greater than or equal to 0.0"
+        },
+        {
+          "field": "sku",
+          "message": "must not be blank"
+        }
+      ]
+    }
+    ```
+    
+    Returned when validation fails for one or more fields.
+  </Tab>
+</Tabs>
+
+## Validation Rules
+
+### SKU
+- Must not be blank
+- Must be unique across all products
+- Example: `"PROD-001"`, `"LAPTOP-CHARGER-65W"`
+
+### Name
+- Must not be blank
+- Should be descriptive and concise
+- Example: `"Laptop Charger"`, `"Wireless Mouse"`
+
+### Description
+- Optional field
+- Can contain detailed product information
+- Example: `"65W USB-C laptop charger compatible with most devices"`
+
+### Price
+- Must be greater than or equal to 0.0
+- Stored as BigDecimal for precision
+- Example: `29.99`, `0.00`, `199.99`
+
+### Stock
+- Must be zero or positive integer
+- Represents initial available quantity
+- Example: `0`, `50`, `1000`
+
+## Implementation Notes
+
+- The service uses Spring Boot validation annotations to ensure data integrity
+- Product creation is an atomic operation - both product and stock records are created together
+- The SKU field is case-sensitive
+- Price values are handled as BigDecimal to prevent floating-point precision issues
+- Upon successful creation (201), the response includes the `Location` header pointing to the new resource

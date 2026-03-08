@@ -1,0 +1,451 @@
+---
+title: Installation
+description: Complete installation guide for StreamLine Logistics microservices
+---
+
+This guide walks you through installing and building StreamLine Logistics from source.
+
+## Clone the Repository
+
+<Steps>
+
+<Step title="Clone the repository">
+
+Clone the StreamLine Logistics repository to your local machine:
+
+```bash
+git clone <repository-url>
+cd StreamLine-Logistics
+```
+
+<Tip>
+Replace `<repository-url>` with your actual repository URL.
+</Tip>
+
+</Step>
+
+<Step title="Verify project structure">
+
+Ensure the project structure is correct:
+
+```bash
+ls -la
+```
+
+You should see the following microservice directories:
+
+```
+StreamLine-Logistics/
+├── microservice-config/
+├── microservice-eureka/
+├── microservice-gateway/
+├── microservice-inventory/
+├── microservice-order/
+├── microservice-tracking/
+├── docker-compose.yml
+└── pom.xml
+```
+
+</Step>
+
+</Steps>
+
+## Build the Project
+
+<Note>
+The project uses Spring Boot 4.0.2, Spring Cloud 2025.1.0, and Java 17.
+</Note>
+
+<Steps>
+
+<Step title="Clean and install dependencies">
+
+Build all microservices using Maven:
+
+```bash
+mvn clean install
+```
+
+This command will:
+- Download all dependencies
+- Compile all microservices
+- Run tests (if configured)
+- Create JAR files for each service
+- Install artifacts to local Maven repository
+
+<Warning>
+The initial build may take 5-10 minutes depending on your internet connection and system performance.
+</Warning>
+
+</Step>
+
+<Step title="Verify the build">
+
+Check that all microservices built successfully:
+
+```bash
+ls -la */target/*.jar
+```
+
+You should see JAR files for each microservice:
+
+```
+microservice-config/target/microservice-config-0.0.1-SNAPSHOT.jar
+microservice-eureka/target/microservice-eureka-0.0.1-SNAPSHOT.jar
+microservice-gateway/target/microservice-gateway-0.0.1-SNAPSHOT.jar
+microservice-inventory/target/microservice-inventory-0.0.1-SNAPSHOT.jar
+microservice-order/target/microservice-order-0.0.1-SNAPSHOT.jar
+microservice-tracking/target/microservice-tracking-0.0.1-SNAPSHOT.jar
+```
+
+</Step>
+
+</Steps>
+
+## Build Docker Images
+
+<Steps>
+
+<Step title="Review Dockerfiles">
+
+Each microservice has its own Dockerfile. The docker-compose.yml file references these Dockerfiles to build images.
+
+Verify Dockerfiles exist:
+
+```bash
+ls -la microservice-*/Dockerfile
+```
+
+</Step>
+
+<Step title="Build all Docker images">
+
+Build Docker images for all services using docker-compose:
+
+```bash
+docker compose build
+```
+
+This process will:
+- Build Docker images for each microservice
+- Tag images appropriately
+- Pull required base images
+- Pull database images (PostgreSQL, MySQL, MongoDB)
+
+<Note>
+Building all images may take 10-15 minutes on the first run.
+</Note>
+
+</Step>
+
+<Step title="Verify Docker images">
+
+List all built images:
+
+```bash
+docker images | grep -E '(eureka|order|inventory|tracking)'
+```
+
+You should see:
+
+```
+eureka-service     latest    <image-id>    <time>    <size>
+order-service      latest    <image-id>    <time>    <size>
+inventory-service  latest    <image-id>    <time>    <size>
+tracking-service   latest    <image-id>    <time>    <size>
+```
+
+And database images:
+
+```bash
+docker images | grep -E '(postgres|mysql|mongo)'
+```
+
+```
+postgres    15        <image-id>    <time>    <size>
+mysql       8         <image-id>    <time>    <size>
+mongo       latest    <image-id>    <time>    <size>
+```
+
+</Step>
+
+</Steps>
+
+## Start Services
+
+<Steps>
+
+<Step title="Start all services">
+
+Launch all microservices and databases:
+
+```bash
+docker compose up -d
+```
+
+The `-d` flag runs containers in detached mode.
+
+</Step>
+
+<Step title="Monitor service startup">
+
+Watch the logs to ensure services start correctly:
+
+```bash
+docker compose logs -f
+```
+
+Press `Ctrl+C` to stop following logs.
+
+<Tip>
+Services will start in dependency order. Eureka Server starts first, followed by other services.
+</Tip>
+
+</Step>
+
+<Step title="Check service health">
+
+Verify all containers are running:
+
+```bash
+docker compose ps
+```
+
+All services should show `Up` status:
+
+```
+NAME                STATUS
+eureka-server       Up
+order-service       Up
+inventory-service   Up
+tracking-service    Up
+order_db            Up
+inventory_db        Up
+tracking_db         Up
+```
+
+</Step>
+
+<Step title="Wait for Eureka registration">
+
+Allow 30-60 seconds for all services to register with Eureka Server.
+
+Check Eureka dashboard:
+
+```bash
+open http://localhost:8761
+```
+
+You should see all microservices registered:
+- MSVC-ORDER
+- MSVC-INVENTORY
+- MSVC-TRACKING
+
+</Step>
+
+</Steps>
+
+## Verify Installation
+
+<Steps>
+
+<Step title="Check Eureka Server">
+
+Access the Eureka dashboard:
+
+```bash
+curl http://localhost:8761/eureka/apps
+```
+
+Or open in browser: http://localhost:8761
+
+</Step>
+
+<Step title="Check Order Service">
+
+Verify the Order Service is accessible:
+
+```bash
+curl http://localhost:8090/actuator/health
+```
+
+Expected response:
+
+```json
+{
+  "status": "UP"
+}
+```
+
+</Step>
+
+<Step title="Check Inventory Service">
+
+Verify the Inventory Service is accessible:
+
+```bash
+curl http://localhost:9090/actuator/health
+```
+
+Expected response:
+
+```json
+{
+  "status": "UP"
+}
+```
+
+</Step>
+
+<Step title="Check Tracking Service">
+
+Verify the Tracking Service is accessible:
+
+```bash
+curl http://localhost:8091/actuator/health
+```
+
+Expected response:
+
+```json
+{
+  "status": "UP"
+}
+```
+
+</Step>
+
+<Step title="Verify database connections">
+
+Check that databases are accessible:
+
+<CodeGroup>
+```bash PostgreSQL (Order DB)
+docker exec -it order_db psql -U postgres -d orderdb -c "SELECT 1;"
+```
+
+```bash MySQL (Inventory DB)
+docker exec -it inventory_db mysql -uroot -ppassword -e "SELECT 1;"
+```
+
+```bash MongoDB (Tracking DB)
+docker exec -it tracking_db mongosh -u root -p password --eval "db.adminCommand('ping')"
+```
+</CodeGroup>
+
+</Step>
+
+</Steps>
+
+## Troubleshooting
+
+### Build Failures
+
+If Maven build fails:
+
+```bash
+# Clear Maven cache and rebuild
+rm -rf ~/.m2/repository
+mvn clean install -U
+```
+
+### Docker Build Issues
+
+If Docker image build fails:
+
+```bash
+# Clean Docker build cache
+docker builder prune -af
+
+# Rebuild without cache
+docker compose build --no-cache
+```
+
+### Service Won't Start
+
+If a service fails to start:
+
+```bash
+# Check logs for specific service
+docker compose logs <service-name>
+
+# Example
+docker compose logs order-service
+```
+
+### Port Conflicts
+
+If ports are already in use:
+
+<CodeGroup>
+```bash Linux/macOS
+# Find process using port
+sudo lsof -i :<port-number>
+
+# Kill the process
+kill -9 <PID>
+```
+
+```powershell Windows
+# Find process using port
+netstat -ano | findstr :<port-number>
+
+# Kill the process
+taskkill /PID <PID> /F
+```
+</CodeGroup>
+
+### Database Connection Issues
+
+If services can't connect to databases:
+
+```bash
+# Restart databases
+docker compose restart order_db inventory_db tracking_db
+
+# Wait 10 seconds, then restart services
+sleep 10
+docker compose restart order-service inventory-service tracking-service
+```
+
+## Stopping Services
+
+To stop all services:
+
+```bash
+# Stop containers but keep data
+docker compose stop
+
+# Stop and remove containers (keeps volumes)
+docker compose down
+
+# Stop and remove everything including volumes
+docker compose down -v
+```
+
+<Warning>
+Using `docker compose down -v` will delete all database data!
+</Warning>
+
+## Development Mode
+
+For development, you can run services individually:
+
+```bash
+# Start only databases
+docker compose up -d order_db inventory_db tracking_db eureka-server
+
+# Run a service locally
+cd microservice-order
+mvn spring-boot:run
+```
+
+<Note>
+When running locally, update `application.yml` to point to `localhost` instead of container names.
+</Note>
+
+## Next Steps
+
+- Learn about [Docker Setup](/setup/docker-setup) for detailed Docker configuration
+- Review [Configuration](/setup/configuration) for customizing services
+- Explore the API documentation for each service

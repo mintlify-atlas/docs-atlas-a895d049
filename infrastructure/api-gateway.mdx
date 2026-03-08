@@ -1,0 +1,493 @@
+---
+title: 'API Gateway'
+description: 'Spring Cloud Gateway providing unified entry point and routing for StreamLine Logistics microservices'
+---
+
+## Overview
+
+The API Gateway serves as the single entry point for all external requests to the StreamLine Logistics platform. Built with Spring Cloud Gateway, it provides request routing, load balancing, security, and cross-cutting concerns for the microservices architecture.
+
+<Info>
+The API Gateway runs on port **8080** and routes all incoming traffic to the appropriate backend microservices.
+</Info>
+
+## Architecture Role
+
+The Gateway sits between external clients and internal microservices:
+
+```
+Client → API Gateway (8080) → Eureka Service Discovery → Microservices
+                                                         ├── Order Service (8090)
+                                                         ├── Inventory Service (9090)
+                                                         └── Tracking Service (8091)
+```
+
+### Key Responsibilities
+
+- **Unified Entry Point**: Single address for all client requests
+- **Service Routing**: Forward requests to appropriate microservices
+- **Load Balancing**: Distribute traffic across service instances
+- **Security**: Centralized authentication and authorization (future)
+- **Rate Limiting**: Protect backend services from overload (future)
+- **Request/Response Transformation**: Modify headers, paths, and payloads as needed
+
+## Configuration
+
+### Application Properties
+
+The Gateway uses minimal configuration in `application.properties`:
+
+```properties
+spring.application.name=microservice-gateway
+```
+
+<Note>
+The Gateway relies on Spring Cloud Gateway's auto-configuration and Eureka integration for routing. Routes can be defined programmatically or via configuration files.
+</Note>
+
+### Default Port
+
+The API Gateway runs on **port 8080** (Spring Boot default). This can be overridden:
+
+```yaml
+server:
+  port: 8080
+```
+
+## Spring Boot Application
+
+The Gateway application is a standard Spring Boot application:
+
+```java
+package com.microservice.gateway.microservice_gateway;
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+
+@SpringBootApplication
+public class MicroserviceGatewayApplication {
+
+    public static void main(String[] args) {
+        SpringApplication.run(MicroserviceGatewayApplication.class, args);
+    }
+}
+```
+
+Spring Cloud Gateway is automatically configured through dependencies. No `@EnableGateway` annotation is required.
+
+## Dependencies
+
+From `pom.xml`:
+
+```xml
+<dependencies>
+    <dependency>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-actuator</artifactId>
+    </dependency>
+    <dependency>
+        <groupId>org.springframework.cloud</groupId>
+        <artifactId>spring-cloud-starter-config</artifactId>
+    </dependency>
+    <dependency>
+        <groupId>org.springframework.cloud</groupId>
+        <artifactId>spring-cloud-starter-gateway-server-webmvc</artifactId>
+    </dependency>
+    <dependency>
+        <groupId>org.springframework.cloud</groupId>
+        <artifactId>spring-cloud-starter-netflix-eureka-client</artifactId>
+    </dependency>
+</dependencies>
+```
+
+**Spring Cloud Version**: 2025.1.0
+
+### Key Dependencies Explained
+
+| Dependency | Purpose |
+|------------|----------|
+| `spring-cloud-starter-gateway-server-webmvc` | WebMVC-based Gateway implementation |
+| `spring-cloud-starter-netflix-eureka-client` | Service discovery integration |
+| `spring-cloud-starter-config` | Config Server client support |
+| `spring-boot-starter-actuator` | Health checks and metrics |
+
+<Note>
+This project uses `spring-cloud-starter-gateway-server-webmvc`, which is the servlet-based Gateway implementation. For reactive applications, use `spring-cloud-starter-gateway` instead.
+</Note>
+
+## Eureka Integration
+
+The Gateway integrates with Eureka Server for dynamic service discovery:
+
+```yaml
+eureka:
+  instance:
+    hostname: eureka-server
+  client:
+    service-url:
+      defaultZone: http://eureka-server:8761/eureka/
+```
+
+With Eureka integration:
+- Gateway automatically discovers available service instances
+- Routes can reference services by their registered names
+- Load balancing happens automatically across instances
+- Failed instances are automatically removed from routing
+
+## Routing Configuration
+
+### Automatic Routing with Eureka
+
+With Eureka enabled, the Gateway can automatically route requests based on service names:
+
+```
+GET http://localhost:8080/msvc-order/api/orders
+→ Routes to Order Service (msvc-order)
+
+GET http://localhost:8080/msvc-inventory/api/products  
+→ Routes to Inventory Service (msvc-inventory)
+
+GET http://localhost:8080/msvc-tracking/api/shipments
+→ Routes to Tracking Service (msvc-tracking)
+```
+
+### Custom Route Configuration
+
+Routes can be defined programmatically for more control:
+
+```java
+@Configuration
+public class GatewayConfig {
+    
+    @Bean
+    public RouteLocator customRoutes(RouteLocatorBuilder builder) {
+        return builder.routes()
+            .route("order-service", r -> r
+                .path("/api/orders/**")
+                .uri("lb://msvc-order"))
+            .route("inventory-service", r -> r
+                .path("/api/inventory/**", "/api/products/**")
+                .uri("lb://msvc-inventory"))
+            .route("tracking-service", r -> r
+                .path("/api/tracking/**", "/api/shipments/**")
+                .uri("lb://msvc-tracking"))
+            .build();
+    }
+}
+```
+
+The `lb://` prefix enables client-side load balancing via Spring Cloud LoadBalancer.
+
+### Route Configuration via YAML
+
+Alternatively, define routes in `application.yml`:
+
+```yaml
+spring:
+  cloud:
+    gateway:
+      routes:
+        - id: order-service
+          uri: lb://msvc-order
+          predicates:
+            - Path=/api/orders/**
+        - id: inventory-service  
+          uri: lb://msvc-inventory
+          predicates:
+            - Path=/api/inventory/**, /api/products/**
+        - id: tracking-service
+          uri: lb://msvc-tracking
+          predicates:
+            - Path=/api/tracking/**, /api/shipments/**
+```
+
+## Docker Configuration
+
+The API Gateway is deployed as a Docker container:
+
+```yaml
+api-gateway:
+  container_name: api-gateway
+  build:
+    context: .
+    dockerfile: ./microservice-gateway/Dockerfile
+  image: api-gateway:latest
+  ports:
+    - "8080:8080"
+  networks:
+    - microservices-network
+  depends_on:
+    - eureka-server
+  environment:
+    - EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=http://eureka-server:8761/eureka/
+```
+
+<Info>
+The Gateway must start after Eureka Server to properly register and discover backend services. The `depends_on` directive ensures correct startup order.
+</Info>
+
+## Request Flow
+
+### Example: Creating an Order
+
+1. **Client Request**
+   ```
+   POST http://localhost:8080/api/orders
+   Content-Type: application/json
+   
+   {
+     "customerId": 123,
+     "items": [{"productId": 1, "quantity": 2}]
+   }
+   ```
+
+2. **Gateway Processing**
+   - Receives request on port 8080
+   - Matches route predicate `/api/orders/**`
+   - Queries Eureka for `msvc-order` instances
+   - Selects instance via load balancing
+
+3. **Forward to Service**
+   - Forwards request to Order Service (e.g., `http://order-service:8090/api/orders`)
+   - Preserves headers, body, and HTTP method
+
+4. **Response**
+   - Order Service processes request
+   - Response flows back through Gateway
+   - Client receives response
+
+## Filters and Transformations
+
+### Global Filters
+
+Apply cross-cutting concerns to all routes:
+
+```java
+@Component
+public class LoggingFilter implements GlobalFilter, Ordered {
+    
+    @Override
+    public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
+        log.info("Request: {} {}", 
+            exchange.getRequest().getMethod(),
+            exchange.getRequest().getURI());
+        return chain.filter(exchange);
+    }
+    
+    @Override
+    public int getOrder() {
+        return -1; // High priority
+    }
+}
+```
+
+### Request/Response Modification
+
+Modify headers, paths, or bodies:
+
+```yaml
+spring:
+  cloud:
+    gateway:
+      routes:
+        - id: order-service
+          uri: lb://msvc-order
+          predicates:
+            - Path=/api/orders/**
+          filters:
+            - AddRequestHeader=X-Gateway-Request, true
+            - AddResponseHeader=X-Gateway-Response, true
+            - StripPrefix=1  # Remove /api from path
+```
+
+## Config Server Integration
+
+The Gateway can load configuration from Config Server:
+
+```xml
+<dependency>
+    <groupId>org.springframework.cloud</groupId>
+    <artifactId>spring-cloud-starter-config</artifactId>
+</dependency>
+```
+
+Configuration:
+
+```yaml
+spring:
+  config:
+    import: "optional:configserver:http://localhost:8888"
+  application:
+    name: microservice-gateway
+```
+
+This allows centralizing Gateway routes, filters, and settings in the Config Server.
+
+## Monitoring and Observability
+
+### Actuator Endpoints
+
+The Gateway exposes Spring Boot Actuator endpoints:
+
+```yaml
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,gateway
+  endpoint:
+    gateway:
+      enabled: true
+```
+
+Key endpoints:
+- `/actuator/health` - Gateway health status
+- `/actuator/gateway/routes` - View configured routes
+- `/actuator/gateway/refresh` - Refresh route configuration
+- `/actuator/gateway/globalfilters` - List global filters
+
+### Metrics
+
+Gateway automatically collects metrics:
+- Request count per route
+- Request duration
+- Error rates
+- Active connections
+
+## Security
+
+### Future Authentication/Authorization
+
+The Gateway is the ideal place to implement security:
+
+```java
+@Bean
+public SecurityWebFilterChain securityWebFilterChain(ServerHttpSecurity http) {
+    return http
+        .authorizeExchange()
+            .pathMatchers("/api/public/**").permitAll()
+            .anyExchange().authenticated()
+        .and()
+        .oauth2ResourceServer().jwt()
+        .and()
+        .build();
+}
+```
+
+<Note>
+Centralized authentication at the Gateway prevents unauthorized requests from reaching backend services, reducing security overhead in individual microservices.
+</Note>
+
+## Performance and Scaling
+
+### Load Balancing
+
+The `lb://` URI scheme enables client-side load balancing:
+- Round-robin distribution (default)
+- Configurable load balancing strategies
+- Automatic health-based routing
+- Sticky sessions (if configured)
+
+### Rate Limiting
+
+Protect backend services with rate limiting:
+
+```yaml
+spring:
+  cloud:
+    gateway:
+      routes:
+        - id: order-service
+          uri: lb://msvc-order
+          predicates:
+            - Path=/api/orders/**
+          filters:
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 10
+                redis-rate-limiter.burstCapacity: 20
+```
+
+### Circuit Breaking
+
+Implement resilience with Resilience4j:
+
+```yaml
+spring:
+  cloud:
+    gateway:
+      routes:
+        - id: order-service
+          uri: lb://msvc-order
+          predicates:
+            - Path=/api/orders/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: orderServiceCircuitBreaker
+                fallbackUri: forward:/fallback/orders
+```
+
+## Troubleshooting
+
+### 503 Service Unavailable
+
+**Causes:**
+- Backend service not registered in Eureka
+- All service instances are down
+- Network connectivity issues
+
+**Solutions:**
+1. Check Eureka dashboard for registered services
+2. Verify backend service health
+3. Review Gateway logs for routing errors
+4. Test direct connectivity to backend service
+
+### Route Not Found (404)
+
+**Causes:**
+- No matching route predicate
+- Incorrect path in request
+- Route configuration error
+
+**Solutions:**
+1. Review route configuration
+2. Check `/actuator/gateway/routes` endpoint
+3. Verify request path matches predicate
+4. Enable debug logging: `logging.level.org.springframework.cloud.gateway=DEBUG`
+
+### Timeout Errors
+
+**Causes:**
+- Backend service slow response
+- Network latency
+- Default timeout too short
+
+**Solutions:**
+1. Increase timeout configuration:
+   ```yaml
+   spring:
+     cloud:
+       gateway:
+         httpclient:
+           connect-timeout: 5000
+           response-timeout: 10s
+   ```
+2. Optimize backend service performance
+3. Implement caching strategies
+
+## Best Practices
+
+<Note>
+- **Keep Gateway Stateless**: Don't store session state in the Gateway
+- **Centralize Cross-Cutting Concerns**: Authentication, logging, rate limiting
+- **Use Descriptive Route IDs**: Makes debugging easier
+- **Monitor Gateway Metrics**: Track request rates, latencies, and errors  
+- **Implement Circuit Breakers**: Prevent cascading failures
+- **Version Your APIs**: Use path prefixes like `/v1/`, `/v2/`
+</Note>
+
+## Related Services
+
+- [Eureka Server](/infrastructure/eureka-server) - Service discovery for routing
+- [Config Server](/infrastructure/config-server) - Centralized configuration management

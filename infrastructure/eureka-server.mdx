@@ -1,0 +1,258 @@
+---
+title: 'Eureka Server'
+description: 'Netflix Eureka service discovery and registration for the StreamLine Logistics microservices architecture'
+---
+
+## Overview
+
+The Eureka Server provides service discovery and registration capabilities for all microservices in the StreamLine Logistics platform. Built on Netflix Eureka, it acts as a central registry where services register themselves and discover other services dynamically.
+
+<Info>
+Eureka Server runs on port **8761** and serves as the backbone of service-to-service communication in the microservices architecture.
+</Info>
+
+## Configuration
+
+### Application Configuration
+
+The Eureka Server is configured via `application.yml`:
+
+```yaml
+server:
+  port: 8761
+
+spring:
+  application:
+    name: msvc-eureka
+  config:
+    import: "optional:configserver:http://localhost:8888"
+
+eureka:
+  instance:
+    hostname: eureka-server
+  client:
+    register-with-eureka: false
+    fetch-registry: false
+    server-url:
+      defaultZone: http://${eureka.instance.hostname}:${server.port}/eureka/
+```
+
+### Key Configuration Properties
+
+| Property | Value | Description |
+|----------|-------|-------------|
+| `server.port` | 8761 | Standard Eureka Server port |
+| `spring.application.name` | msvc-eureka | Service identifier |
+| `eureka.client.register-with-eureka` | false | Prevents server from registering with itself |
+| `eureka.client.fetch-registry` | false | Server doesn't need to fetch registry |
+| `eureka.instance.hostname` | eureka-server | Hostname used in Docker environment |
+
+<Note>
+The `register-with-eureka` and `fetch-registry` properties are set to `false` because this is the Eureka Server itself, not a client. Client services will have these set to `true`.
+</Note>
+
+## Spring Boot Application
+
+The Eureka Server is enabled with a single annotation:
+
+```java
+package com.microservice.eureka;
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.cloud.netflix.eureka.server.EnableEurekaServer;
+
+@EnableEurekaServer
+@SpringBootApplication
+public class MicroserviceEurekaApplication {
+
+    public static void main(String[] args) {
+        SpringApplication.run(MicroserviceEurekaApplication.class, args);
+    }
+}
+```
+
+The `@EnableEurekaServer` annotation activates all Eureka Server functionality, including:
+- Service registration endpoints
+- Service discovery API
+- Health monitoring dashboard
+- Registry replication (in cluster mode)
+
+## Docker Configuration
+
+The Eureka Server runs as a Docker container in the microservices network:
+
+```yaml
+eureka-server:
+  container_name: eureka-server
+  build:
+    context: .
+    dockerfile: ./microservice-eureka/Dockerfile
+  image: eureka-service:latest
+  ports:
+    - "8761:8761"
+  networks:
+    - microservices-network
+```
+
+<Info>
+All microservices define `depends_on: eureka-server` to ensure the registry is available before services attempt to register.
+</Info>
+
+## Service Registration
+
+### How Services Register
+
+Client services (Order, Inventory, Tracking) register with Eureka by including these dependencies:
+
+```xml
+<dependency>
+    <groupId>org.springframework.cloud</groupId>
+    <artifactId>spring-cloud-starter-netflix-eureka-client</artifactId>
+</dependency>
+```
+
+And configuring the Eureka client in their `application.yml`:
+
+```yaml
+eureka:
+  instance:
+    hostname: eureka-server
+  client:
+    service-url:
+      defaultZone: http://${eureka.instance.hostname}:8761/eureka/
+```
+
+### Registration Process
+
+1. **Service Startup**: When a microservice starts, it sends a registration request to Eureka Server
+2. **Heartbeats**: Services send heartbeat signals every 30 seconds (default) to maintain their registration
+3. **Renewal**: Eureka expects renewals every 30 seconds; services not renewing are evicted after 90 seconds
+4. **Metadata**: Services register with metadata including hostname, port, health check URL, and custom metadata
+
+### Registered Services
+
+The following services register with Eureka:
+
+- **msvc-order** (Order Service) - Port 8090
+- **msvc-inventory** (Inventory Service) - Port 9090  
+- **msvc-tracking** (Tracking Service) - Port 8091
+
+## Service Discovery
+
+Services discover each other using Eureka's registry:
+
+### Using OpenFeign
+
+StreamLine Logistics uses OpenFeign for inter-service communication. Feign clients automatically resolve service names via Eureka:
+
+```java
+@FeignClient(name = "msvc-inventory")
+public interface InventoryClient {
+    @PostMapping("/api/inventory/check")
+    InventoryResponse checkStock(@RequestBody InventoryRequest request);
+}
+```
+
+The `name = "msvc-inventory"` is resolved by querying Eureka for instances of the inventory service.
+
+## Eureka Dashboard
+
+Access the Eureka web dashboard at:
+
+```
+http://localhost:8761
+```
+
+The dashboard displays:
+- Registered service instances
+- Instance status (UP, DOWN, STARTING)
+- Instance metadata (hostname, IP, port)
+- Lease information and last heartbeat
+- General Eureka Server information
+
+<Note>
+The dashboard is for development and monitoring. In production, consider securing it with Spring Security or disabling it entirely.
+</Note>
+
+## Dependencies
+
+From `pom.xml`:
+
+```xml
+<dependencies>
+    <dependency>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-actuator</artifactId>
+    </dependency>
+    <dependency>
+        <groupId>org.springframework.cloud</groupId>
+        <artifactId>spring-cloud-starter-config</artifactId>
+    </dependency>
+    <dependency>
+        <groupId>org.springframework.cloud</groupId>
+        <artifactId>spring-cloud-starter-netflix-eureka-server</artifactId>
+    </dependency>
+</dependencies>
+```
+
+**Spring Cloud Version**: 2025.1.0
+
+## Integration with Config Server
+
+Eureka Server optionally integrates with the Config Server for centralized configuration:
+
+```yaml
+spring:
+  config:
+    import: "optional:configserver:http://localhost:8888"
+```
+
+The `optional:` prefix allows Eureka to start even if Config Server is unavailable, ensuring resilience during startup.
+
+## High Availability
+
+For production deployments, consider:
+
+- **Multiple Eureka Instances**: Deploy 2-3 Eureka servers for redundancy
+- **Peer Replication**: Configure Eureka servers to replicate registry data
+- **Load Balancing**: Use a load balancer in front of Eureka instances
+- **Self-Preservation Mode**: Eureka's default protection against network partitions
+
+## Troubleshooting
+
+### Services Not Registering
+
+1. Check network connectivity to port 8761
+2. Verify `eureka.client.service-url.defaultZone` configuration
+3. Review service logs for registration errors
+4. Ensure Eureka Server started before client services
+
+### Services Showing as DOWN
+
+1. Check service health endpoint (`/actuator/health`)
+2. Verify heartbeat configuration
+3. Review network latency between service and Eureka
+4. Check for self-preservation mode activation
+
+### Dashboard Not Accessible
+
+1. Verify server is running: `docker ps | grep eureka-server`
+2. Check port mapping: `8761:8761`
+3. Ensure no firewall blocking port 8761
+4. Review Eureka Server logs for startup errors
+
+## Security Considerations
+
+<Note>
+In production environments, secure Eureka Server with:
+- Spring Security authentication
+- HTTPS/TLS encryption
+- Network-level access controls (security groups, firewalls)
+- Actuator endpoint protection
+</Note>
+
+## Related Services
+
+- [API Gateway](/infrastructure/api-gateway) - Routes requests using Eureka service discovery
+- [Config Server](/infrastructure/config-server) - Provides centralized configuration to Eureka and all services

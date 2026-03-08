@@ -1,0 +1,586 @@
+---
+title: Architecture
+description: System architecture, microservices design, and data models for StreamLine Logistics
+---
+
+# System Architecture
+
+StreamLine Logistics follows a microservices architecture pattern with domain-driven design principles. Each service owns its database and communicates through well-defined APIs using OpenFeign.
+
+## Architecture Diagram
+
+The following diagram illustrates the complete system architecture, showing how components interact:
+
+```mermaid
+graph LR;
+    subgraph Client_Zone [Acceso Externo]
+        User((Usuario/Frontend))
+    end
+
+    subgraph Infrastructure [Infraestructura]
+        Gateway[API Gateway :8080]
+        Eureka[Eureka Server :8761]
+        Config[Config Server :8888]
+    end
+
+    subgraph Microservices [Lógica de Negocio]
+        Order[Order Service :8090]
+        Inventory[Inventory Service :9090]
+        Tracking[Tracking Service :8091]
+    end
+
+    subgraph Persistence [Bases de Datos]
+        DB1[(PostgreSQL)]
+        DB3[(MongoDB)]
+        DB2[(MySQL)]
+    end
+
+    %% Flujo de Configuración
+    Config -.-> Gateway
+    Config -.-> Order
+    Config -.-> Inventory
+    Config -.-> Tracking
+
+    %% Registro
+    Order -.-> Eureka
+    Inventory -.-> Eureka
+    Tracking -.-> Eureka
+
+    %% Flujo de la Petición
+    User -->|POST /orders| Gateway
+    Gateway -->|Forward| Order
+    
+    %% Comunicación Feign
+    Order -- "1. Check Stock (Feign)" --> Inventory
+    Inventory -. "2. Stock OK" .-> Order
+    Order -- "3. Create Shipment (Feign)" --> Tracking
+    
+    %% Almacenamiento
+    Order === DB1
+    Inventory === DB2
+    Tracking === DB3
+
+    style Gateway color:black,fill:#f9f,stroke:#333,stroke-width:2px
+    style Eureka color:black,fill:#bbf,stroke:#333
+    style Config color:black,fill:#bbf,stroke:#333
+```
+
+## Architectural Decisions
+
+### Database per Service Pattern
+
+<Note>
+  Each microservice maintains its own database to ensure loose coupling and independent scalability.
+</Note>
+
+**Benefits**:
+- **Loose Coupling**: Services don't share database schemas, preventing coupling through the database
+- **Independent Scaling**: Each database can be scaled independently based on service needs
+- **Technology Freedom**: Each service can choose the optimal database technology
+- **Schema Evolution**: Database schemas can evolve without affecting other services
+
+**Trade-offs**:
+- **Data Consistency**: Requires distributed transaction patterns (eventual consistency)
+- **Data Duplication**: Some data may need to be replicated across services
+- **Complex Queries**: Cross-service queries require API calls or data aggregation
+
+### Monorepo Approach
+
+All microservices are maintained in a single repository:
+
+**Advantages**:
+- Simplified dependency management for shared libraries (DTOs, utilities)
+- Single `docker-compose.yml` for entire stack
+- Consistent versioning across services
+- Easier refactoring and code navigation
+- Atomic commits across multiple services
+
+### Synchronous Communication (Phase 1)
+
+Current implementation uses OpenFeign for synchronous HTTP calls between services:
+
+**Flow Example (Order Creation)**:
+1. Client sends POST request to API Gateway
+2. Gateway routes to Order Service
+3. Order Service calls Inventory Service via Feign to validate stock
+4. Inventory Service responds with availability confirmation
+5. Order Service calls Tracking Service to create shipment
+6. Order Service responds to client with order details
+
+<Warning>
+  Synchronous communication can create cascading failures. Future phases may introduce event-driven architecture with message queues (Kafka/RabbitMQ) for improved resilience.
+</Warning>
+
+## Microservices Deep Dive
+
+### Order Service
+
+**Responsibility**: Entry point for customer orders, orchestrates order creation workflow.
+
+**Database**: PostgreSQL (Port 5432)
+
+**Configuration**:
+```yaml
+server:
+  port: 8090
+
+spring:
+  application:
+    name: msvc-order
+  datasource:
+    driver-class-name: org.postgresql.Driver
+    url: jdbc:postgresql://order_db:5432/orderdb
+    username: postgres
+    password: password
+  jpa:
+    hibernate:
+      ddl-auto: create
+    database: postgresql
+```
+
+#### Data Model
+
+**Order Entity**:
+- `id`: Long (Primary Key)
+- `orderNumber`: String (UUID for public tracking)
+- `customerId`: Long (Reference to customer)
+- `orderDate`: LocalDateTime
+- `status`: Enum (`PENDING_CHECK`, `CONFIRMED`, `SHIPPED`, `CANCELLED`)
+- `totalPrice`: BigDecimal
+
+**OrderItem Entity** (OneToMany relationship):
+- `id`: Long (Primary Key)
+- `productId`: Long (Reference to inventory product)
+- `quantity`: Integer
+- `priceAtPurchase`: BigDecimal (Historical price snapshot)
+
+<Note>
+  Storing `priceAtPurchase` ensures order totals remain accurate even if product prices change later.
+</Note>
+
+**Order Status Lifecycle**:
+```mermaid
+stateDiagram-v2
+    [*] --> PENDING_CHECK
+    PENDING_CHECK --> CONFIRMED: Stock Available
+    PENDING_CHECK --> CANCELLED: Stock Unavailable
+    CONFIRMED --> SHIPPED: Shipment Created
+    CONFIRMED --> CANCELLED: Customer Request
+    SHIPPED --> [*]
+    CANCELLED --> [*]
+```
+
+### Inventory Service
+
+**Responsibility**: Manages product catalog and stock levels with reservation support.
+
+**Database**: MySQL (Port 3306)
+
+**Configuration**:
+```yaml
+server:
+  port: 9090
+
+spring:
+  application:
+    name: msvc-inventory
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://inventory_db:3306/inventorydb
+    username: root
+    password: password
+  jpa:
+    hibernate:
+      ddl-auto: create
+    database: mysql
+```
+
+#### Data Model
+
+**Product Entity** (`products` table):
+```java
+@Entity
+@Table(name = "products")
+public class ProductEntity {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @Column(nullable = false, unique = true)
+    private String sku;
+
+    @Column(nullable = false)
+    private String name;
+
+    private String description;
+
+    @Column(nullable = false, precision = 10, scale = 2)
+    private BigDecimal price;
+}
+```
+
+**Stock Entity** (`stocks` table):
+```java
+@Entity
+@Table(name = "stocks")
+public class StockEntity {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @Column(name = "product_id", nullable = false, unique = true)
+    private Long productId;
+
+    @Column(nullable = false)
+    private int totalQuantity;
+
+    @Column(nullable = false)
+    private int totalReserved;
+}
+```
+
+#### API Endpoints
+
+The Inventory Service exposes REST endpoints at `/api/v1/inventory`:
+
+<CodeGroup>
+```bash Create Product
+POST /api/v1/inventory
+
+{
+  "sku": "TSHIRT-BLUE-L",
+  "name": "Blue T-Shirt Large",
+  "description": "Cotton blue t-shirt, size L",
+  "price": 29.99,
+  "stock": 100
+}
+```
+
+```bash Get All Products
+GET /api/v1/inventory
+```
+
+```bash Get Product by ID
+GET /api/v1/inventory/{id}
+```
+
+```bash Reserve Stock
+POST /api/v1/inventory/{id}/reserveStock
+
+{
+  "amount": 5
+}
+```
+
+```bash Release Stock
+POST /api/v1/inventory/{id}/releaseStock
+
+{
+  "amount": 5
+}
+```
+
+```bash Consume Stock
+POST /api/v1/inventory/{id}/consumeStock
+
+{
+  "amount": 5
+}
+```
+
+```bash Add Stock
+POST /api/v1/inventory/{id}/addStock
+
+{
+  "amount": 50
+}
+```
+</CodeGroup>
+
+**Stock Management Logic**:
+
+1. **Reserve Stock**: When an order is created, stock is moved from `totalQuantity` to `totalReserved`
+2. **Release Stock**: If an order is cancelled, reserved stock returns to available quantity
+3. **Consume Stock**: When order ships, reserved stock is permanently removed
+4. **Add Stock**: Inventory replenishment increases total quantity
+
+<Note>
+  Available stock = `totalQuantity - totalReserved`. This prevents overselling during concurrent orders.
+</Note>
+
+### Tracking Service
+
+**Responsibility**: Records shipment lifecycle events with flexible event metadata.
+
+**Database**: MongoDB (Port 27017)
+
+**Configuration**:
+```yaml
+server:
+  port: 8091
+
+mongodb:
+  user: root
+  password: password
+  database: trakcingdb
+
+spring:
+  application:
+    name: msvc-tracking
+  data:
+    mongodb:
+      uri: mongodb://${mongodb.user}:${mongodb.password}@localhost:27017/${mongodb.database}
+```
+
+#### Data Model (MongoDB Collection)
+
+**Shipment Document**:
+```json
+{
+  "_id": ObjectId("..."),
+  "orderId": 12345,
+  "trackingNumber": "TRK-UUID-12345",
+  "carrier": "DHL",
+  "estimatedDelivery": ISODate("2026-03-15T10:00:00Z"),
+  "status": "IN_TRANSIT",
+  "events": [
+    {
+      "status": "Salida de almacén",
+      "timestamp": ISODate("2026-03-08T14:30:00Z"),
+      "location": "Warehouse A - Madrid",
+      "details": "Package picked up by carrier"
+    },
+    {
+      "status": "En tránsito",
+      "timestamp": ISODate("2026-03-10T08:15:00Z"),
+      "location": "Distribution Center - Barcelona",
+      "details": "In transit to destination",
+      "gpsCoordinates": {
+        "latitude": 41.3851,
+        "longitude": 2.1734
+      }
+    },
+    {
+      "status": "Entregado",
+      "timestamp": ISODate("2026-03-12T16:45:00Z"),
+      "location": "Customer Address",
+      "details": "Delivered to recipient",
+      "signature": "data:image/png;base64,...",
+      "photo": "data:image/jpeg;base64,..."
+    }
+  ]
+}
+```
+
+<Note>
+  **Why MongoDB?** The schema-less nature allows different event types to store diverse information (GPS coordinates, delivery photos, customs data, weather incidents) without requiring schema migrations.
+</Note>
+
+**Key Features**:
+- Generates unique `trackingNumber` using UUID
+- Supports multiple carriers (DHL, FedEx, UPS, etc.)
+- Flexible event metadata (GPS, photos, signatures)
+- Real-time event aggregation
+- Historical tracking data retention
+
+## Infrastructure Services
+
+### Eureka Server (Port 8761)
+
+**Purpose**: Service discovery and registration.
+
+**How it works**:
+1. Each microservice registers with Eureka on startup
+2. Services periodically send heartbeats to maintain registration
+3. Services query Eureka to discover other service instances
+4. Enables dynamic scaling without hardcoded URLs
+
+**Access**: http://localhost:8761
+
+### Config Server (Port 8888)
+
+**Purpose**: Centralized configuration management.
+
+**Configuration sources**:
+- Local file system
+- Git repository (recommended for production)
+- Environment variables
+
+**Benefits**:
+- Change configuration without rebuilding services
+- Environment-specific configurations (dev, staging, prod)
+- Encrypted sensitive properties
+- Configuration versioning with Git
+
+### API Gateway (Port 8080)
+
+**Purpose**: Single entry point for external clients.
+
+**Responsibilities**:
+- **Routing**: Forwards requests to appropriate microservices
+- **Security**: Authentication and authorization
+- **Rate Limiting**: Prevents API abuse
+- **Load Balancing**: Distributes load across service instances
+- **Circuit Breaking**: Handles service failures gracefully
+- **Request/Response Transformation**: Standardizes API contracts
+
+<Warning>
+  The gateway is a single point of failure. Production deployments should run multiple gateway instances behind a load balancer.
+</Warning>
+
+## Communication Patterns
+
+### Service-to-Service Communication (OpenFeign)
+
+**Example**: Order Service calling Inventory Service
+
+```java
+@FeignClient(name = "msvc-inventory")
+public interface InventoryClient {
+    
+    @PostMapping("/api/v1/inventory/{id}/reserveStock")
+    ResponseEntity<Void> reserveStock(
+        @PathVariable Long id,
+        @RequestBody StockQuantityDTO quantity
+    );
+}
+```
+
+Feign automatically:
+- Discovers service instances via Eureka
+- Performs client-side load balancing
+- Handles request serialization/deserialization
+- Integrates with Spring Cloud Circuit Breaker
+
+### Data Transfer Objects (DTOs)
+
+Services communicate using well-defined DTOs:
+
+**InventoryRequest**: Order Service → Inventory Service
+```json
+{
+  "items": [
+    {
+      "productId": 1,
+      "quantity": 2
+    }
+  ]
+}
+```
+
+**InventoryResponse**: Inventory Service → Order Service
+```json
+{
+  "success": true,
+  "message": "Stock reserved successfully",
+  "failedItems": []
+}
+```
+
+**TrackingRequest**: Order Service → Tracking Service
+```json
+{
+  "orderId": 12345,
+  "customerId": 67890,
+  "carrier": "DHL",
+  "estimatedDelivery": "2026-03-15"
+}
+```
+
+## Data Consistency Strategies
+
+### Saga Pattern (Future Implementation)
+
+For distributed transactions across services:
+
+**Order Creation Saga**:
+1. Create order (Order Service)
+2. Reserve stock (Inventory Service)
+3. Create shipment (Tracking Service)
+4. Confirm order (Order Service)
+
+**Compensation Actions** (if any step fails):
+- Release reserved stock
+- Cancel shipment
+- Mark order as cancelled
+
+### Eventual Consistency
+
+<Note>
+  The system accepts that data across services may be temporarily inconsistent but will eventually converge to a consistent state.
+</Note>
+
+**Example**: 
+- Order Service creates order (status: PENDING_CHECK)
+- Inventory check happens asynchronously
+- Order status updates to CONFIRMED or CANCELLED
+
+## Scaling Strategies
+
+### Horizontal Scaling
+
+Each service can be independently scaled:
+
+```yaml
+# docker-compose.override.yml
+services:
+  inventory-service:
+    deploy:
+      replicas: 3
+```
+
+Eureka automatically handles load balancing across instances.
+
+### Database Scaling
+
+**PostgreSQL (Order Service)**:
+- Read replicas for query scaling
+- Connection pooling (HikariCP)
+- Partitioning by date for historical data
+
+**MySQL (Inventory Service)**:
+- Read replicas for product catalog queries
+- Write-through caching (Redis) for hot products
+- Sharding by product category
+
+**MongoDB (Tracking Service)**:
+- Replica sets for high availability
+- Sharding by tracking number
+- Time-series collections for event data
+
+## Security Considerations
+
+<Warning>
+  The current implementation uses default credentials and no authentication. Production deployments must implement proper security.
+</Warning>
+
+**Required for Production**:
+- JWT-based authentication in API Gateway
+- Service-to-service authentication (mutual TLS)
+- Encrypted database connections
+- Secret management (HashiCorp Vault, AWS Secrets Manager)
+- Rate limiting and DDoS protection
+- Input validation and SQL injection prevention
+- CORS configuration for web clients
+
+## Monitoring and Observability
+
+**Recommended Tools** (not yet implemented):
+
+- **Spring Boot Actuator**: Health checks and metrics
+- **Prometheus**: Metrics collection
+- **Grafana**: Metrics visualization
+- **ELK Stack**: Centralized logging (Elasticsearch, Logstash, Kibana)
+- **Zipkin/Jaeger**: Distributed tracing
+- **Spring Cloud Sleuth**: Trace ID propagation
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Get the system running locally
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/inventory/overview">
+    Explore detailed API documentation
+  </Card>
+</CardGroup>

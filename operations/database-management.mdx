@@ -1,0 +1,379 @@
+---
+title: 'Database Management'
+description: 'Managing PostgreSQL, MySQL, and MongoDB databases in StreamLine Logistics'
+---
+
+## Overview
+
+StreamLine Logistics uses a database-per-service architecture with three different database technologies, each chosen for specific operational requirements:
+
+- **PostgreSQL** - Order Service database
+- **MySQL** - Inventory Service database  
+- **MongoDB** - Tracking Service database
+
+All databases are containerized and orchestrated via Docker Compose, with persistent volumes for data retention.
+
+## Database Architecture
+
+### PostgreSQL (Order Service)
+
+**Container**: `order_db`  
+**Port**: `5432`  
+**Database**: `orderdb`
+
+<Warning>
+PostgreSQL is chosen for its robustness in handling ACID transactions and complex relationships between customers and order line items. This is critical for maintaining order integrity.
+</Warning>
+
+#### Connection Details
+
+```yaml
+Host: order_db (internal) / localhost (external)
+Port: 5432
+Database: orderdb
+Username: postgres
+Password: password
+```
+
+#### JDBC Connection String
+
+```properties
+jdbc:postgresql://order_db:5432/orderdb
+```
+
+#### Data Model
+
+The Order Service manages two primary entities:
+
+**Order Entity**:
+- `id`: Long (Primary Key)
+- `orderNumber`: String (UUID for public tracking)
+- `customerId`: Long (Customer identifier)
+- `orderDate`: LocalDateTime
+- `status`: Enum (PENDING_CHECK, CONFIRMED, SHIPPED, CANCELLED)
+- `totalPrice`: BigDecimal
+
+**OrderItem Entity** (OneToMany relationship):
+- `id`: Long
+- `productId`: Long (Reference to inventory)
+- `quantity`: Integer
+- `priceAtPurchase`: BigDecimal
+
+#### Connecting to PostgreSQL
+
+```bash
+# From host machine
+docker exec -it order_db psql -U postgres -d orderdb
+
+# List all tables
+\dt
+
+# View orders
+SELECT * FROM orders;
+
+# Check order items for a specific order
+SELECT * FROM order_items WHERE order_id = 1;
+```
+
+#### Backup and Restore
+
+```bash
+# Backup
+docker exec order_db pg_dump -U postgres orderdb > orderdb_backup.sql
+
+# Restore
+docker exec -i order_db psql -U postgres orderdb < orderdb_backup.sql
+```
+
+### MySQL (Inventory Service)
+
+**Container**: `inventory_db`  
+**Port**: `3306`  
+**Database**: `inventorydb`
+
+<Warning>
+MySQL is selected for excellent read/write performance on product master tables. The inventory service requires fast stock checks and updates during order processing.
+</Warning>
+
+#### Connection Details
+
+```yaml
+Host: inventory_db (internal) / localhost (external)
+Port: 3306
+Database: inventorydb
+Username: root
+Password: password
+```
+
+#### JDBC Connection String
+
+```properties
+jdbc:mysql://inventory_db:3306/inventorydb
+```
+
+#### Data Model
+
+The Inventory Service manages product and stock entities:
+
+**Product Entity**:
+- `id`: Long (Primary Key)
+- `sku`: String (Unique warehouse code, e.g., "TSHIRT-BLUE-L")
+- `name`: String
+- `description`: String
+- `price`: BigDecimal
+
+**Stock Entity** (OneToOne with Product):
+- `id`: Long
+- `productId`: Long
+- `quantity`: Integer (Current available quantity)
+- `reservedQuantity`: Integer (Reserved for pending orders)
+
+#### Connecting to MySQL
+
+```bash
+# From host machine
+docker exec -it inventory_db mysql -uroot -ppassword inventorydb
+
+# Show tables
+SHOW TABLES;
+
+# View products
+SELECT * FROM products;
+
+# Check stock levels
+SELECT p.sku, p.name, s.quantity, s.reserved_quantity 
+FROM products p 
+JOIN stock s ON p.id = s.product_id;
+
+# Find low stock items
+SELECT p.sku, p.name, s.quantity 
+FROM products p 
+JOIN stock s ON p.id = s.product_id 
+WHERE s.quantity < 10;
+```
+
+#### Backup and Restore
+
+```bash
+# Backup
+docker exec inventory_db mysqldump -uroot -ppassword inventorydb > inventorydb_backup.sql
+
+# Restore
+docker exec -i inventory_db mysql -uroot -ppassword inventorydb < inventorydb_backup.sql
+```
+
+### MongoDB (Tracking Service)
+
+**Container**: `tracking_db`  
+**Port**: `27017`  
+**Database**: `trakcingdb` (as defined in configuration)
+
+<Warning>
+MongoDB's schema-less design allows flexible event storage for shipment tracking. Different transport events can store varied data (GPS coordinates, delivery photos, customs information) without schema alterations.
+</Warning>
+
+#### Connection Details
+
+```yaml
+Host: tracking_db (internal) / localhost (external)
+Port: 27017
+Database: trakcingdb
+Username: root
+Password: password
+```
+
+#### MongoDB Connection String
+
+```properties
+mongodb://root:password@localhost:27017/trakcingdb
+```
+
+#### Data Model
+
+The Tracking Service uses a flexible document structure:
+
+**Shipment Collection**:
+- `_id`: ObjectId
+- `orderId`: Long (Reference to Order Service)
+- `trackingNumber`: String (Customer-facing tracking code)
+- `carrier`: String (e.g., "DHL", "FedEx")
+- `estimatedDelivery`: Date
+- `status`: String
+- `events`: Array of tracking events
+  - `status`: String (e.g., "Warehouse departure", "In transit", "Delivered")
+  - `timestamp`: Date
+  - `location`: String
+  - `details`: String (Additional information)
+
+#### Connecting to MongoDB
+
+```bash
+# From host machine
+docker exec -it tracking_db mongosh -u root -p password --authenticationDatabase admin
+
+# Switch to tracking database
+use trakcingdb
+
+# View all shipments
+db.shipments.find().pretty()
+
+# Find shipment by tracking number
+db.shipments.find({ trackingNumber: "TRACK-12345" })
+
+# View recent events for a shipment
+db.shipments.find(
+  { orderId: 1 },
+  { trackingNumber: 1, events: { $slice: -5 } }
+)
+
+# Count shipments by status
+db.shipments.aggregate([
+  { $group: { _id: "$status", count: { $sum: 1 } } }
+])
+```
+
+#### Backup and Restore
+
+```bash
+# Backup
+docker exec tracking_db mongodump --username=root --password=password --authenticationDatabase=admin --db=trakcingdb --out=/backup
+
+# Copy backup from container
+docker cp tracking_db:/backup ./mongodb_backup
+
+# Restore
+docker exec -i tracking_db mongorestore --username=root --password=password --authenticationDatabase=admin --db=trakcingdb /backup/trakcingdb
+```
+
+## Volume Management
+
+All databases use Docker volumes for persistence:
+
+```yaml
+Volumes:
+  - orderdb-data: PostgreSQL data
+  - inventorydb-data: MySQL data
+  - trackingdb-data: MongoDB data
+```
+
+### Viewing Volume Information
+
+```bash
+# List all volumes
+docker volume ls | grep -E '(orderdb|inventorydb|trackingdb)'
+
+# Inspect a volume
+docker volume inspect source_orderdb-data
+
+# Check volume disk usage
+docker system df -v
+```
+
+### Removing Volumes
+
+<Warning>
+Removing volumes will permanently delete all database data. Only perform this operation if you have confirmed backups or are resetting a development environment.
+</Warning>
+
+```bash
+# Stop all services first
+docker-compose down
+
+# Remove specific volume
+docker volume rm source_orderdb-data
+
+# Remove all volumes (including databases)
+docker-compose down -v
+```
+
+## Database Initialization
+
+All services use `ddl-auto: create` in their Hibernate configuration, which means:
+
+- Tables are automatically created on first startup
+- **Existing tables are dropped and recreated on each restart**
+- This is suitable for development but should be changed to `validate` or `update` for production
+
+### Production Configuration Recommendations
+
+```yaml
+spring:
+  jpa:
+    hibernate:
+      ddl-auto: validate  # Only validate schema, don't modify
+```
+
+## Common Database Operations
+
+### Checking Database Connectivity
+
+```bash
+# PostgreSQL
+docker exec order_db pg_isready -U postgres
+
+# MySQL
+docker exec inventory_db mysqladmin -uroot -ppassword ping
+
+# MongoDB
+docker exec tracking_db mongosh --eval "db.adminCommand('ping')" -u root -p password --authenticationDatabase admin
+```
+
+### Viewing Database Logs
+
+```bash
+# PostgreSQL logs
+docker logs order_db
+
+# MySQL logs
+docker logs inventory_db
+
+# MongoDB logs
+docker logs tracking_db
+```
+
+### Resetting a Single Database
+
+```bash
+# Stop the specific database container
+docker stop order_db
+
+# Remove the container
+docker rm order_db
+
+# Remove the volume
+docker volume rm source_orderdb-data
+
+# Restart services
+docker-compose up -d order-db
+```
+
+## Security Considerations
+
+<Warning>
+The current configuration uses default passwords ("password") which are acceptable for development but must be changed for production deployments.
+</Warning>
+
+### Production Security Checklist
+
+- [ ] Change all default passwords
+- [ ] Use environment variables or secrets management for credentials
+- [ ] Enable SSL/TLS for database connections
+- [ ] Restrict database ports (don't expose to host in production)
+- [ ] Implement network policies to limit inter-service communication
+- [ ] Enable database audit logging
+- [ ] Configure regular automated backups
+- [ ] Use read-only replicas for reporting queries
+
+## Network Configuration
+
+All databases operate on the `microservices-network` bridge network:
+
+```bash
+# Inspect the network
+docker network inspect source_microservices-network
+
+# View connected containers
+docker network inspect source_microservices-network --format='{{range .Containers}}{{.Name}} {{end}}'
+```
+
+Services communicate using container names as hostnames (e.g., `order_db`, `inventory_db`, `tracking_db`) which are resolved by Docker's internal DNS.

@@ -1,0 +1,472 @@
+---
+title: Tracking Service API
+description: REST API for shipment tracking and event management
+---
+
+<Note>
+  The Tracking Service is currently under active development. This documentation describes the planned API endpoints and data models based on the technical specification.
+</Note>
+
+## Overview
+
+The Tracking Service manages the complete lifecycle of shipments, recording every event from warehouse departure to final delivery. It provides real-time tracking capabilities and maintains a detailed event history for each shipment.
+
+**Base URL**: `http://localhost:8091`
+
+**Database**: MongoDB (trackingdb)
+
+**Service Port**: 8091
+
+## Architecture
+
+The Tracking Service is built using:
+- **Spring Boot** with Spring Web MVC
+- **Spring Data MongoDB** for NoSQL document storage
+- **Spring Cloud OpenFeign** for inter-service communication
+- **Eureka Client** for service discovery
+- **MongoDB** for flexible event data storage
+
+<Note>
+  MongoDB was chosen for its schema-less design, allowing different tracking events to store varied information (GPS coordinates, delivery photos, customs data, weather incidents) without schema changes.
+</Note>
+
+## Data Models
+
+### Shipment
+
+Represents a shipment with its tracking information and event history.
+
+```java
+@Document(collection = "shipments")
+public class Shipment {
+    @Id
+    private String id;                    // MongoDB ObjectId
+    private Long orderId;                 // Reference to Order Service
+    private String trackingNumber;        // UUID for customer tracking
+    private String carrier;               // e.g., "DHL", "FedEx", "UPS"
+    private Date estimatedDelivery;
+    private String status;                // Current shipment status
+    private List<ShipmentEvent> events;   // Event history
+}
+```
+
+### ShipmentEvent
+
+Represents individual tracking events in the shipment lifecycle.
+
+```java
+public class ShipmentEvent {
+    private String status;        // e.g., "Departed Warehouse", "In Transit"
+    private Date timestamp;
+    private String location;      // City or facility name
+    private String details;       // Additional information
+    private Map<String, Object> metadata;  // Flexible data (GPS, photos, etc.)
+}
+```
+
+**Common Event Types**:
+- `WAREHOUSE_DEPARTURE` - Package left the warehouse
+- `IN_TRANSIT` - Package in transit
+- `CUSTOMS_CLEARANCE` - Package at customs
+- `OUT_FOR_DELIVERY` - Package on delivery vehicle
+- `DELIVERED` - Package delivered to customer
+- `DELIVERY_FAILED` - Delivery attempt failed
+- `RETURNED` - Package returned to sender
+
+## Planned API Endpoints
+
+### Create Shipment
+
+Initializes a new shipment tracking record.
+
+```http
+POST /api/tracking/shipments
+```
+
+**Request Body**:
+
+```json
+{
+  "orderId": 1,
+  "carrier": "DHL",
+  "shippingAddress": "123 Main St, New York, NY 10001"
+}
+```
+
+**Response**:
+
+```json
+{
+  "id": "65f8a3b2c1d4e5f6a7b8c9d0",
+  "orderId": 1,
+  "trackingNumber": "TRK-b4e7f8c9-5678-1234-abcd-ef0123456789",
+  "carrier": "DHL",
+  "estimatedDelivery": "2026-03-15T18:00:00Z",
+  "status": "WAREHOUSE_DEPARTURE",
+  "events": [
+    {
+      "status": "WAREHOUSE_DEPARTURE",
+      "timestamp": "2026-03-08T14:30:00Z",
+      "location": "Distribution Center - Newark",
+      "details": "Package processed and departed facility",
+      "metadata": {}
+    }
+  ]
+}
+```
+
+<Note>
+  The tracking number is automatically generated as a UUID with "TRK-" prefix for easy identification.
+</Note>
+
+### Get Shipment by Tracking Number
+
+Retrieves shipment details using the public tracking number.
+
+```http
+GET /api/tracking/shipments/track/{trackingNumber}
+```
+
+**Response**:
+
+```json
+{
+  "id": "65f8a3b2c1d4e5f6a7b8c9d0",
+  "orderId": 1,
+  "trackingNumber": "TRK-b4e7f8c9-5678-1234-abcd-ef0123456789",
+  "carrier": "DHL",
+  "estimatedDelivery": "2026-03-15T18:00:00Z",
+  "status": "IN_TRANSIT",
+  "events": [
+    {
+      "status": "WAREHOUSE_DEPARTURE",
+      "timestamp": "2026-03-08T14:30:00Z",
+      "location": "Distribution Center - Newark",
+      "details": "Package processed and departed facility"
+    },
+    {
+      "status": "IN_TRANSIT",
+      "timestamp": "2026-03-09T08:15:00Z",
+      "location": "Regional Hub - Philadelphia",
+      "details": "Package in transit to destination",
+      "metadata": {
+        "gps": {
+          "lat": 39.9526,
+          "lon": -75.1652
+        }
+      }
+    }
+  ]
+}
+```
+
+### Get Shipment by Order ID
+
+Retrieves shipment information for a specific order.
+
+```http
+GET /api/tracking/shipments/order/{orderId}
+```
+
+**Response**: Same structure as Get Shipment by Tracking Number
+
+### Add Tracking Event
+
+Adds a new event to the shipment's tracking history.
+
+```http
+POST /api/tracking/shipments/{trackingNumber}/events
+```
+
+**Request Body**:
+
+```json
+{
+  "status": "OUT_FOR_DELIVERY",
+  "location": "New York Local Facility",
+  "details": "Package loaded on delivery vehicle",
+  "metadata": {
+    "driverId": "D12345",
+    "vehicleId": "V789"
+  }
+}
+```
+
+**Response**:
+
+```json
+{
+  "status": "OUT_FOR_DELIVERY",
+  "timestamp": "2026-03-10T09:00:00Z",
+  "location": "New York Local Facility",
+  "details": "Package loaded on delivery vehicle",
+  "metadata": {
+    "driverId": "D12345",
+    "vehicleId": "V789"
+  }
+}
+```
+
+### Update Shipment Status
+
+Updates the current status of a shipment.
+
+```http
+PUT /api/tracking/shipments/{trackingNumber}/status
+```
+
+**Request Body**:
+
+```json
+{
+  "status": "DELIVERED"
+}
+```
+
+**Response**:
+
+```json
+{
+  "trackingNumber": "TRK-b4e7f8c9-5678-1234-abcd-ef0123456789",
+  "status": "DELIVERED",
+  "updatedAt": "2026-03-10T15:30:00Z"
+}
+```
+
+### Get Event History
+
+Retrieves the complete event history for a shipment.
+
+```http
+GET /api/tracking/shipments/{trackingNumber}/events
+```
+
+**Response**:
+
+```json
+{
+  "trackingNumber": "TRK-b4e7f8c9-5678-1234-abcd-ef0123456789",
+  "events": [
+    {
+      "status": "WAREHOUSE_DEPARTURE",
+      "timestamp": "2026-03-08T14:30:00Z",
+      "location": "Distribution Center - Newark",
+      "details": "Package processed and departed facility"
+    },
+    {
+      "status": "IN_TRANSIT",
+      "timestamp": "2026-03-09T08:15:00Z",
+      "location": "Regional Hub - Philadelphia",
+      "details": "Package in transit to destination"
+    },
+    {
+      "status": "OUT_FOR_DELIVERY",
+      "timestamp": "2026-03-10T09:00:00Z",
+      "location": "New York Local Facility",
+      "details": "Package loaded on delivery vehicle"
+    },
+    {
+      "status": "DELIVERED",
+      "timestamp": "2026-03-10T15:30:00Z",
+      "location": "123 Main St, New York, NY",
+      "details": "Delivered to recipient",
+      "metadata": {
+        "signatureUrl": "https://cdn.example.com/signatures/abc123.png",
+        "photoUrl": "https://cdn.example.com/deliveries/abc123.jpg"
+      }
+    }
+  ]
+}
+```
+
+### List Active Shipments
+
+Retrieves all shipments that are not yet delivered.
+
+```http
+GET /api/tracking/shipments/active
+```
+
+**Query Parameters**:
+- `carrier` (optional) - Filter by carrier
+- `status` (optional) - Filter by status
+
+**Response**:
+
+```json
+[
+  {
+    "trackingNumber": "TRK-b4e7f8c9-5678-1234-abcd-ef0123456789",
+    "orderId": 1,
+    "carrier": "DHL",
+    "status": "IN_TRANSIT",
+    "estimatedDelivery": "2026-03-15T18:00:00Z"
+  }
+]
+```
+
+## Flexible Event Metadata
+
+The `metadata` field in events supports various data types for different scenarios:
+
+### GPS Coordinates
+
+```json
+{
+  "metadata": {
+    "gps": {
+      "lat": 40.7128,
+      "lon": -74.0060
+    }
+  }
+}
+```
+
+### Delivery Photos
+
+```json
+{
+  "metadata": {
+    "photoUrl": "https://cdn.example.com/deliveries/abc123.jpg",
+    "signatureUrl": "https://cdn.example.com/signatures/abc123.png"
+  }
+}
+```
+
+### Customs Information
+
+```json
+{
+  "metadata": {
+    "customsDeclaration": "CD123456",
+    "dutyPaid": 45.50,
+    "clearanceDate": "2026-03-09T12:00:00Z"
+  }
+}
+```
+
+### Weather Incidents
+
+```json
+{
+  "metadata": {
+    "delayReason": "severe_weather",
+    "weatherCondition": "snowstorm",
+    "expectedResolution": "2026-03-11T08:00:00Z"
+  }
+}
+```
+
+## Database Schema
+
+MongoDB collection structure:
+
+```javascript
+// shipments collection
+{
+  _id: ObjectId("65f8a3b2c1d4e5f6a7b8c9d0"),
+  orderId: 1,
+  trackingNumber: "TRK-b4e7f8c9-5678-1234-abcd-ef0123456789",
+  carrier: "DHL",
+  estimatedDelivery: ISODate("2026-03-15T18:00:00Z"),
+  status: "IN_TRANSIT",
+  events: [
+    {
+      status: "WAREHOUSE_DEPARTURE",
+      timestamp: ISODate("2026-03-08T14:30:00Z"),
+      location: "Distribution Center - Newark",
+      details: "Package processed and departed facility",
+      metadata: {}
+    }
+  ]
+}
+```
+
+**Indexes**:
+
+```javascript
+// Unique index on tracking number
+db.shipments.createIndex({ trackingNumber: 1 }, { unique: true })
+
+// Index on order ID for lookups
+db.shipments.createIndex({ orderId: 1 })
+
+// Index on status for filtering active shipments
+db.shipments.createIndex({ status: 1 })
+
+// Compound index for carrier + status queries
+db.shipments.createIndex({ carrier: 1, status: 1 })
+```
+
+## Error Handling
+
+The service will return standard HTTP status codes:
+
+- `200 OK` - Successful request
+- `201 Created` - Shipment created successfully
+- `400 Bad Request` - Invalid request data
+- `404 Not Found` - Shipment not found
+- `409 Conflict` - Tracking number already exists
+- `500 Internal Server Error` - Server error
+
+**Error Response Format**:
+
+```json
+{
+  "timestamp": "2026-03-08T14:30:00Z",
+  "status": 404,
+  "error": "Not Found",
+  "message": "Shipment with tracking number TRK-xxx not found",
+  "path": "/api/tracking/shipments/track/TRK-xxx"
+}
+```
+
+## Real-Time Event Aggregation
+
+The Tracking Service supports real-time event aggregation using MongoDB's aggregation pipeline:
+
+```javascript
+// Get shipment statistics by carrier
+db.shipments.aggregate([
+  {
+    $group: {
+      _id: "$carrier",
+      totalShipments: { $sum: 1 },
+      inTransit: {
+        $sum: { $cond: [{ $eq: ["$status", "IN_TRANSIT"] }, 1, 0] }
+      },
+      delivered: {
+        $sum: { $cond: [{ $eq: ["$status", "DELIVERED"] }, 1, 0] }
+      }
+    }
+  }
+])
+```
+
+## Configuration
+
+**Application Properties**:
+
+```properties
+server.port=8091
+spring.application.name=tracking-service
+
+# MongoDB Configuration
+spring.data.mongodb.uri=mongodb://root:password@tracking-db:27017/trackingdb?authSource=admin
+spring.data.mongodb.database=trackingdb
+
+# Eureka Configuration
+eureka.client.service-url.defaultZone=http://eureka-server:8761/eureka/
+
+# Config Server
+spring.config.import=optional:configserver:http://config-server:8888
+```
+
+## Next Steps
+
+Once implemented, the Tracking Service will provide:
+- Real-time shipment tracking with event history
+- Flexible event metadata storage for varied tracking scenarios
+- High-performance queries using MongoDB indexes
+- Integration with Order Service for automated shipment creation
+- RESTful API accessible through the API Gateway at port 8080

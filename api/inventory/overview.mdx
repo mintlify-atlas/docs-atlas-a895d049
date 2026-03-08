@@ -1,0 +1,102 @@
+---
+title: 'Inventory Service API'
+description: 'Manage products and stock levels in the StreamLine Logistics system'
+---
+
+## Overview
+
+The Inventory Service API provides comprehensive endpoints for managing products and their stock levels within the StreamLine Logistics platform. This service handles product creation, retrieval, and sophisticated stock management operations including reservations, releases, and consumption tracking.
+
+## Base URL
+
+```
+http://localhost:8081/api/v1/inventory
+```
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="Product Management" icon="box">
+    Create and retrieve product information including SKU, name, description, and pricing
+  </Card>
+  <Card title="Stock Operations" icon="warehouse">
+    Add, reserve, release, and consume stock with atomic operations
+  </Card>
+  <Card title="Real-time Availability" icon="chart-line">
+    Track available stock quantities across all products
+  </Card>
+  <Card title="Validation" icon="shield-check">
+    Built-in validation ensures data integrity for all operations
+  </Card>
+</CardGroup>
+
+## API Capabilities
+
+The Inventory Service provides two main categories of functionality:
+
+### Product Operations
+
+- **List Products**: Retrieve all products with their current stock levels
+- **Get Product Details**: Fetch detailed information for a specific product by ID
+- **Create Product**: Add new products to the inventory with initial stock
+
+### Stock Management Operations
+
+- **Add Stock**: Increase available stock quantity for a product
+- **Reserve Stock**: Reserve stock for pending orders (reduces available stock)
+- **Release Stock**: Release previously reserved stock back to available inventory
+- **Consume Stock**: Permanently reduce stock when orders are fulfilled
+
+## Data Models
+
+### Product Response
+
+All product endpoints return data in the following format:
+
+```json
+{
+  "sku": "PROD-001",
+  "name": "Laptop Charger",
+  "description": "65W USB-C laptop charger compatible with most devices",
+  "price": 29.99,
+  "availableStock": 150
+}
+```
+
+### Stock Quantity
+
+Stock operations accept a simple quantity object:
+
+```json
+{
+  "amount": 50
+}
+```
+
+## Authentication
+
+The Inventory Service is an internal microservice. Authentication is handled at the API Gateway level. Direct service-to-service communication may use internal authentication tokens.
+
+## Error Responses
+
+The API returns standard HTTP status codes:
+
+| Status Code | Description |
+|-------------|-------------|
+| 200 | Success |
+| 201 | Resource created successfully |
+| 204 | Success with no content |
+| 400 | Invalid request data |
+| 404 | Resource not found |
+| 500 | Internal server error |
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Product Endpoints" icon="box-open" href="/api/inventory/products">
+    Learn about product management endpoints
+  </Card>
+  <Card title="Stock Management" icon="layer-group" href="/api/inventory/stock-management">
+    Explore stock operation endpoints
+  </Card>
+</CardGroup>

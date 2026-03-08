@@ -1,0 +1,152 @@
+---
+title: Introduction
+description: StreamLine Logistics is a microservices-based order management system built with Spring Boot
+---
+
+# StreamLine Logistics
+
+StreamLine Logistics is a comprehensive microservices platform designed to manage the complete lifecycle of an order from creation to final delivery. The system ensures inventory consistency and enables customers to track their packages in real-time.
+
+## Overview
+
+The platform follows modern microservices architecture principles, with each service owning its own database and communicating through well-defined APIs. Built as a monorepo for simplified dependency management and deployment, the system orchestrates multiple databases and services using Docker Compose.
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="Order Management" icon="cart-shopping">
+    Complete order lifecycle management with PostgreSQL for ACID-compliant transactions
+  </Card>
+  <Card title="Inventory Control" icon="warehouse">
+    Real-time stock management with reservation capabilities using MySQL
+  </Card>
+  <Card title="Package Tracking" icon="location-dot">
+    Flexible event tracking with MongoDB for diverse shipping events and GPS data
+  </Card>
+  <Card title="Service Discovery" icon="compass">
+    Automatic service registration and discovery with Eureka Server
+  </Card>
+</CardGroup>
+
+## Technology Stack
+
+StreamLine Logistics leverages a robust set of technologies to deliver a scalable and maintainable platform:
+
+### Core Framework
+- **Spring Boot 4.0.2** - Core application framework with Java 17
+- **Spring Data JPA** - Relational database interactions
+- **Spring Data MongoDB** - NoSQL document store integration
+- **OpenFeign** - Declarative REST client for inter-service communication
+
+### Infrastructure
+- **Eureka Server** - Service discovery and registration
+- **API Gateway** - Unified entry point with security and routing
+- **Config Server** - Centralized configuration management
+- **Docker & Docker Compose** - Containerized deployment orchestration
+
+### Data Persistence
+- **PostgreSQL** - Order data requiring ACID transactions
+- **MySQL** - High-performance inventory operations
+- **MongoDB** - Flexible schema for diverse tracking events
+
+### Development Tools
+- **Lombok** - Reduces boilerplate code
+- **MapStruct** - Type-safe bean mappings
+- **Jacoco** - Code coverage reporting
+- **Swagger/OpenAPI** - API documentation
+
+## Architecture Principles
+
+<Note>
+  **Database per Service**: Each microservice owns its database to prevent coupling and enable independent scaling and schema evolution.
+</Note>
+
+### Why Monorepo?
+
+The monorepo approach simplifies:
+- Shared dependency management (like common DTOs)
+- Unified deployment with a single `docker-compose.yml`
+- Consistent versioning across services
+- Easier code navigation and refactoring
+
+### Communication Strategy
+
+**Phase 1: Synchronous (Current)**
+
+The system uses OpenFeign for synchronous HTTP communication:
+
+1. Order Service receives HTTP POST request
+2. Order Service calls Inventory Service via Feign to validate/reserve stock
+3. If stock is available, Order Service calls Tracking Service to initialize shipment
+4. Response is sent to the client with order ID
+
+<Warning>
+  Future phases may introduce asynchronous messaging with Kafka or RabbitMQ for improved resilience and scalability.
+</Warning>
+
+## Microservices Overview
+
+### Order Service (Port 8090)
+
+The entry point for new purchases. Validates customer data and creates initial order records with status `PENDING_CHECK`.
+
+**Database**: PostgreSQL - chosen for ACID transaction support and complex relationships between customers and order lines.
+
+**Key Entities**:
+- `Order` - Contains order metadata, customer reference, status, and total price
+- `OrderItem` - Individual line items with product references and prices at purchase time
+
+### Inventory Service (Port 9090)
+
+Manages product stock across warehouses with support for stock reservation before final sale confirmation.
+
+**Database**: MySQL - optimized for high-performance read/write operations on product master tables.
+
+**Key Entities**:
+- `Product` - SKU, name, description, and pricing information
+- `Stock` - Available quantity and reserved quantity for pending orders
+
+**API Capabilities**:
+- Create and retrieve products
+- Reserve stock for orders
+- Release reserved stock (on order cancellation)
+- Consume stock (on order shipment)
+- Add stock (inventory replenishment)
+
+### Tracking Service (Port 8091)
+
+Records the complete lifecycle of each package with detailed event tracking.
+
+**Database**: MongoDB (NoSQL) - flexible schema allows different transport events to store diverse information like delivery photos, GPS coordinates, or weather incidents without schema changes.
+
+**Key Features**:
+- Generates unique tracking numbers (UUID)
+- Real-time event aggregation
+- Supports multiple carriers (DHL, FedEx, etc.)
+- Flexible event metadata storage
+
+## Infrastructure Services
+
+### Config Server (Port 8888)
+Centralizes configuration in YAML files, enabling dynamic configuration updates without redeployment.
+
+### Eureka Server (Port 8761)
+Service registry that enables dynamic service discovery. Microservices register themselves on startup and discover other services through Eureka.
+
+### API Gateway (Port 8080)
+Single external access point that handles:
+- Request routing to appropriate microservices
+- Security and authentication
+- Load balancing
+- Rate limiting
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Get the system running locally with Docker Compose
+  </Card>
+  <Card title="Architecture" icon="diagram-project" href="/architecture">
+    Deep dive into system architecture and data models
+  </Card>
+</CardGroup>

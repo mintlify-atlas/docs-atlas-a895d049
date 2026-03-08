@@ -1,0 +1,832 @@
+---
+title: 'Troubleshooting Guide'
+description: 'Common issues and solutions for StreamLine Logistics microservices'
+---
+
+## Overview
+
+This guide covers common operational issues, diagnostic procedures, and solutions for the StreamLine Logistics platform. Issues are organized by service and component type.
+
+## Service Startup Issues
+
+<Accordion title="Services fail to start with 'Connection refused' errors">
+
+**Symptoms**: Services crash on startup with connection errors to Eureka or databases.
+
+**Diagnosis**:
+```bash
+# Check if all containers are running
+docker-compose ps
+
+# Check service logs
+docker logs order-service
+docker logs eureka-server
+```
+
+**Common Causes**:
+
+1. **Eureka Server not ready**: Services try to register before Eureka is available.
+
+**Solution**: Services have `depends_on` configured, but this only waits for container start, not service readiness. Increase retry attempts:
+
+```yaml
+eureka:
+  client:
+    registry-fetch-interval-seconds: 5
+    initial-instance-info-replication-interval-seconds: 5
+```
+
+2. **Database not ready**: Service starts before database is accepting connections.
+
+**Solution**: Add health checks to docker-compose.yml:
+
+```yaml
+order-db:
+  image: postgres:15
+  healthcheck:
+    test: ["CMD-SHELL", "pg_isready -U postgres"]
+    interval: 10s
+    timeout: 5s
+    retries: 5
+
+order-service:
+  depends_on:
+    order-db:
+      condition: service_healthy
+```
+
+3. **Network issues**: Containers can't communicate on the bridge network.
+
+**Solution**: Verify network connectivity:
+
+```bash
+# Check network
+docker network inspect source_microservices-network
+
+# Test connectivity from order-service to database
+docker exec order-service ping order_db
+```
+
+</Accordion>
+
+<Accordion title="Services registered with Eureka but showing as DOWN">
+
+**Symptoms**: Eureka dashboard shows services registered but status is DOWN.
+
+**Diagnosis**:
+```bash
+# Check Eureka dashboard
+open http://localhost:8761
+
+# Query Eureka REST API
+curl http://localhost:8761/eureka/apps/MSVC-ORDER
+```
+
+**Solution**:
+
+1. **Health endpoint failing**: Check actuator health:
+
+```bash
+curl http://localhost:8090/actuator/health
+```
+
+If this returns DOWN, check component health:
+
+```bash
+# Detailed health
+curl http://localhost:8090/actuator/health | jq
+```
+
+2. **Database connection issues**: Verify database connectivity:
+
+```bash
+# PostgreSQL
+docker exec order_db pg_isready -U postgres
+
+# From service container
+docker exec order-service nc -zv order_db 5432
+```
+
+3. **Incorrect Eureka configuration**: Verify application.yml:
+
+```yaml
+eureka:
+  instance:
+    hostname: eureka-server  # Must match container name
+  client:
+    service-url:
+      defaultZone: http://${eureka.instance.hostname}:8761/eureka/
+```
+
+</Accordion>
+
+<Accordion title="Port already in use errors">
+
+**Symptoms**: Container fails to start with "port is already allocated" error.
+
+**Diagnosis**:
+```bash
+# Check what's using the port
+lsof -i :8090
+# or
+netstat -tulpn | grep 8090
+```
+
+**Solution**:
+
+1. **Stop conflicting service**:
+```bash
+# Kill process using the port
+kill -9 <PID>
+```
+
+2. **Change port mapping** in docker-compose.yml:
+```yaml
+order-service:
+  ports:
+    - "8095:8090"  # Map to different host port
+```
+
+3. **Stop old containers**:
+```bash
+# Stop and remove all containers
+docker-compose down
+
+# Remove orphaned containers
+docker-compose down --remove-orphans
+```
+
+</Accordion>
+
+## Database Issues
+
+<Accordion title="Database connection pool exhausted">
+
+**Symptoms**: Services log "HikariPool - Connection is not available" errors.
+
+**Diagnosis**:
+```bash
+# Check active connections
+docker exec order_db psql -U postgres -c "SELECT count(*) FROM pg_stat_activity;"
+
+# Check connection pool metrics
+curl http://localhost:8090/actuator/metrics/hikaricp.connections.active
+```
+
+**Solution**:
+
+1. **Increase pool size** in application.yml:
+
+```yaml
+spring:
+  datasource:
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+```
+
+2. **Check for connection leaks**:
+
+```bash
+# PostgreSQL - find long-running queries
+docker exec order_db psql -U postgres -c "SELECT pid, now() - query_start AS duration, state, query FROM pg_stat_activity WHERE state != 'idle' ORDER BY duration DESC;"
+```
+
+3. **Restart service** to reset connections:
+
+```bash
+docker-compose restart order-service
+```
+
+</Accordion>
+
+<Accordion title="Data not persisting after container restart">
+
+**Symptoms**: Database data is lost when containers are stopped/restarted.
+
+**Diagnosis**:
+```bash
+# Check if volumes exist
+docker volume ls | grep -E '(orderdb|inventorydb|trackingdb)'
+
+# Inspect volume
+docker volume inspect source_orderdb-data
+```
+
+**Solution**:
+
+1. **Verify volume mounts** in docker-compose.yml:
+
+```yaml
+order-db:
+  volumes:
+    - orderdb-data:/var/lib/postgresql/data
+
+volumes:
+  orderdb-data:  # Must be declared
+```
+
+2. **Check if volume was removed**:
+
+```bash
+# Don't use -v flag unless you want to remove volumes
+docker-compose down  # Keeps volumes
+# vs
+docker-compose down -v  # REMOVES volumes
+```
+
+3. **Restore from backup**:
+
+```bash
+# PostgreSQL
+docker exec -i order_db psql -U postgres orderdb < backup.sql
+
+# MySQL
+docker exec -i inventory_db mysql -uroot -ppassword inventorydb < backup.sql
+
+# MongoDB
+docker exec tracking_db mongorestore --username=root --password=password --authenticationDatabase=admin --db=trakcingdb /backup
+```
+
+</Accordion>
+
+<Accordion title="Hibernate DDL errors on startup">
+
+**Symptoms**: Services fail to start with "Table already exists" or schema validation errors.
+
+**Diagnosis**:
+```bash
+# Check service logs
+docker logs order-service 2>&1 | grep -i hibernate
+```
+
+**Solution**:
+
+1. **DDL-auto set to 'create'**: This drops and recreates tables on every restart.
+
+<Warning>
+The default configuration uses `ddl-auto: create` which destroys data on restart. This is only suitable for development.
+</Warning>
+
+Change to appropriate setting:
+
+```yaml
+spring:
+  jpa:
+    hibernate:
+      ddl-auto: update  # or 'validate' for production
+```
+
+Options:
+- `create`: Drop and recreate (development only)
+- `create-drop`: Create on start, drop on stop (testing)
+- `update`: Update schema if needed (development)
+- `validate`: Only validate, don't modify (production)
+- `none`: Do nothing (production with migration tools)
+
+2. **Manual schema reset**:
+
+```bash
+# PostgreSQL
+docker exec order_db psql -U postgres -d orderdb -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
+
+# MySQL
+docker exec inventory_db mysql -uroot -ppassword -e "DROP DATABASE inventorydb; CREATE DATABASE inventorydb;"
+```
+
+</Accordion>
+
+<Accordion title="MongoDB authentication failed">
+
+**Symptoms**: Tracking service can't connect to MongoDB with authentication errors.
+
+**Diagnosis**:
+```bash
+# Test MongoDB connection
+docker exec tracking_db mongosh -u root -p password --authenticationDatabase admin
+
+# Check service logs
+docker logs tracking-service | grep -i mongo
+```
+
+**Solution**:
+
+1. **Verify connection string** in application.yml:
+
+```yaml
+spring:
+  data:
+    mongodb:
+      uri: mongodb://root:password@tracking_db:27017/trakcingdb?authSource=admin
+```
+
+Note: The configuration uses `localhost` but should use `tracking_db` inside Docker network.
+
+2. **Update to correct hostname**:
+
+```yaml
+spring:
+  data:
+    mongodb:
+      uri: mongodb://${mongodb.user}:${mongodb.password}@tracking_db:27017/${mongodb.database}?authSource=admin
+```
+
+3. **Reset MongoDB authentication**:
+
+```bash
+# Stop container
+docker stop tracking_db
+
+# Remove volume
+docker volume rm source_trackingdb-data
+
+# Restart
+docker-compose up -d tracking-db
+```
+
+</Accordion>
+
+## Service Communication Issues
+
+<Accordion title="OpenFeign client calls failing">
+
+**Symptoms**: Order service can't communicate with Inventory or Tracking services via Feign.
+
+**Diagnosis**:
+```bash
+# Check Eureka registry
+curl http://localhost:8761/eureka/apps
+
+# Verify target service is up
+curl http://localhost:9090/actuator/health
+
+# Check service logs for Feign errors
+docker logs order-service | grep -i feign
+```
+
+**Common Causes**:
+
+1. **Service not registered with Eureka**: Verify `@EnableEurekaClient` annotation and configuration.
+
+2. **Incorrect Feign client name**:
+
+```java
+@FeignClient(name = "msvc-inventory")  // Must match spring.application.name
+public interface InventoryClient {
+    // ...
+}
+```
+
+3. **Circuit breaker opened**: If using Resilience4j, circuit may be open after failures.
+
+**Solution**:
+
+```bash
+# Check circuit breaker state (if metrics enabled)
+curl http://localhost:8090/actuator/metrics/resilience4j.circuitbreaker.state
+
+# Restart services to reset
+docker-compose restart order-service
+```
+
+4. **Network timeout**:
+
+```yaml
+feign:
+  client:
+    config:
+      default:
+        connectTimeout: 5000
+        readTimeout: 5000
+```
+
+</Accordion>
+
+<Accordion title="API Gateway routing errors">
+
+**Symptoms**: Requests through API Gateway (port 8080) fail with 404 or 503 errors.
+
+**Diagnosis**:
+```bash
+# Test gateway health
+curl http://localhost:8080/actuator/health
+
+# Check gateway logs
+docker logs microservice-gateway
+
+# Test direct service access
+curl http://localhost:8090/actuator/health
+```
+
+**Solution**:
+
+1. **Verify route configuration**: Check gateway application properties/yml for route definitions.
+
+2. **Service not discovered**: Gateway may not be finding services in Eureka:
+
+```yaml
+spring:
+  cloud:
+    gateway:
+      discovery:
+        locator:
+          enabled: true
+          lower-case-service-id: true
+```
+
+3. **Test service directly** to isolate gateway issues:
+
+```bash
+# Bypass gateway
+curl http://localhost:8090/api/orders
+
+# Through gateway
+curl http://localhost:8080/order-service/api/orders
+```
+
+</Accordion>
+
+## Performance Issues
+
+<Accordion title="Slow response times and timeouts">
+
+**Symptoms**: API requests taking too long or timing out.
+
+**Diagnosis**:
+```bash
+# Check response time
+time curl http://localhost:8090/api/orders
+
+# Monitor resource usage
+docker stats order-service
+
+# Check database query performance
+docker exec order_db psql -U postgres -d orderdb -c "SELECT pid, now() - query_start AS duration, query FROM pg_stat_activity WHERE state = 'active' ORDER BY duration DESC;"
+```
+
+**Solution**:
+
+1. **Database query optimization**:
+
+```sql
+-- Check slow queries in PostgreSQL
+SELECT query, calls, total_time, mean_time 
+FROM pg_stat_statements 
+ORDER BY mean_time DESC 
+LIMIT 10;
+```
+
+2. **Add database indexes**:
+
+```sql
+-- Example: Index on orderNumber for faster lookups
+CREATE INDEX idx_orders_order_number ON orders(order_number);
+```
+
+3. **Increase JVM heap size**:
+
+Add to Dockerfile:
+
+```dockerfile
+ENV JAVA_OPTS="-Xmx512m -Xms256m"
+```
+
+4. **Enable query caching**:
+
+```yaml
+spring:
+  jpa:
+    properties:
+      hibernate:
+        cache:
+          use_second_level_cache: true
+          region:
+            factory_class: org.hibernate.cache.jcache.JCacheRegionFactory
+```
+
+</Accordion>
+
+<Accordion title="Memory leaks and OutOfMemoryError">
+
+**Symptoms**: Service gradually consumes more memory, eventually crashes with OOM error.
+
+**Diagnosis**:
+```bash
+# Monitor memory over time
+docker stats order-service
+
+# Check JVM memory metrics
+curl http://localhost:8090/actuator/metrics/jvm.memory.used
+curl http://localhost:8090/actuator/metrics/jvm.memory.max
+
+# Check for heap dumps
+docker exec order-service ls -lh /tmp
+```
+
+**Solution**:
+
+1. **Enable heap dump on OOM**:
+
+```dockerfile
+ENV JAVA_OPTS="-XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/tmp/heapdump.hprof"
+```
+
+2. **Increase memory limits** in docker-compose.yml:
+
+```yaml
+order-service:
+  deploy:
+    resources:
+      limits:
+        memory: 1G
+      reservations:
+        memory: 512M
+```
+
+3. **Check for connection leaks**:
+
+```bash
+# Monitor connection pool
+curl http://localhost:8090/actuator/metrics/hikaricp.connections.active
+```
+
+4. **Restart service temporarily**:
+
+```bash
+docker-compose restart order-service
+```
+
+</Accordion>
+
+## Data Consistency Issues
+
+<Accordion title="Stock not updating correctly">
+
+**Symptoms**: Inventory shows incorrect quantities or allows overselling.
+
+**Diagnosis**:
+```bash
+# Check stock levels
+docker exec inventory_db mysql -uroot -ppassword inventorydb -e "SELECT * FROM stock;"
+
+# Check for concurrent orders
+docker logs order-service | grep -i "order created"
+```
+
+**Solution**:
+
+1. **Implement pessimistic locking**:
+
+```java
+@Lock(LockModeType.PESSIMISTIC_WRITE)
+@Query("SELECT s FROM Stock s WHERE s.productId = :productId")
+Stock findByProductIdForUpdate(@Param("productId") Long productId);
+```
+
+2. **Use transactions**:
+
+```java
+@Transactional(isolation = Isolation.SERIALIZABLE)
+public void reserveStock(Long productId, Integer quantity) {
+    // Reserve stock logic
+}
+```
+
+3. **Check reserved quantity logic**:
+
+```java
+// Ensure both quantity and reservedQuantity are updated
+stock.setReservedQuantity(stock.getReservedQuantity() + quantity);
+stock.setQuantity(stock.getQuantity() - quantity);
+```
+
+</Accordion>
+
+<Accordion title="Order status not synchronized with tracking">
+
+**Symptoms**: Order shows SHIPPED but tracking shows no events, or vice versa.
+
+**Diagnosis**:
+```bash
+# Check order status
+docker exec order_db psql -U postgres -d orderdb -c "SELECT id, order_number, status FROM orders;"
+
+# Check tracking data
+docker exec tracking_db mongosh -u root -p password --authenticationDatabase admin --eval "use trakcingdb; db.shipments.find().pretty()"
+```
+
+**Solution**:
+
+1. **Verify Feign call succeeded**:
+
+```java
+try {
+    TrackingResponse tracking = trackingClient.createShipment(request);
+    order.setTrackingNumber(tracking.getTrackingNumber());
+    order.setStatus(OrderStatus.SHIPPED);
+} catch (FeignException e) {
+    log.error("Failed to create shipment", e);
+    // Don't update order status
+    throw new ShipmentCreationException("Could not create shipment");
+}
+```
+
+2. **Implement eventual consistency** with retry logic:
+
+```java
+@Retryable(maxAttempts = 3, backoff = @Backoff(delay = 1000))
+public void createShipment(Order order) {
+    trackingClient.createShipment(order);
+}
+```
+
+3. **Add compensation logic** for failures:
+
+```java
+@Recover
+public void recoverFromShipmentFailure(Order order) {
+    // Rollback order status or queue for retry
+    order.setStatus(OrderStatus.PENDING_SHIPMENT);
+    orderRepository.save(order);
+}
+```
+
+</Accordion>
+
+## Container and Docker Issues
+
+<Accordion title="Docker Compose commands hanging or timing out">
+
+**Symptoms**: `docker-compose up` or `docker-compose down` hangs indefinitely.
+
+**Diagnosis**:
+```bash
+# Check Docker daemon status
+systemctl status docker
+
+# Check for resource constraints
+docker info
+
+# View problematic containers
+docker ps -a | grep -E '(Restarting|Exited)'
+```
+
+**Solution**:
+
+1. **Force stop containers**:
+
+```bash
+# Stop all containers forcefully
+docker-compose down -t 5
+
+# Or kill directly
+docker kill $(docker ps -q)
+```
+
+2. **Restart Docker daemon**:
+
+```bash
+sudo systemctl restart docker
+```
+
+3. **Clean up Docker resources**:
+
+```bash
+# Remove stopped containers
+docker container prune -f
+
+# Remove unused networks
+docker network prune -f
+
+# Free up disk space
+docker system prune -a --volumes
+```
+
+<Warning>
+The command `docker system prune -a --volumes` will remove ALL unused containers, networks, images, and volumes. Make sure you have backups of important data.
+</Warning>
+
+</Accordion>
+
+<Accordion title="Image build failures">
+
+**Symptoms**: `docker-compose build` fails with compilation or build errors.
+
+**Diagnosis**:
+```bash
+# Build with verbose output
+docker-compose build --no-cache --progress=plain order-service
+
+# Check Dockerfile
+cat microservice-order/Dockerfile
+```
+
+**Solution**:
+
+1. **Clear Docker build cache**:
+
+```bash
+docker builder prune -a
+```
+
+2. **Build locally first** to isolate issues:
+
+```bash
+cd microservice-order
+mvn clean package
+```
+
+3. **Check Maven/Gradle dependencies**:
+
+```bash
+# Test dependency resolution
+mvn dependency:resolve
+```
+
+4. **Verify Dockerfile base image**:
+
+```dockerfile
+# Use specific version
+FROM eclipse-temurin:17-jdk-alpine AS build
+```
+
+</Accordion>
+
+## Quick Diagnostic Commands
+
+### Full System Health Check
+
+```bash
+#!/bin/bash
+echo "=== Container Status ==="
+docker-compose ps
+
+echo -e "\n=== Service Health ==="
+for port in 8090 9090 8091 8761; do
+    echo -n "Port $port: "
+    curl -s http://localhost:$port/actuator/health | jq -r '.status' || echo "UNREACHABLE"
+done
+
+echo -e "\n=== Database Connectivity ==="
+echo -n "PostgreSQL: "
+docker exec order_db pg_isready -U postgres
+
+echo -n "MySQL: "
+docker exec inventory_db mysqladmin -uroot -ppassword ping 2>/dev/null
+
+echo -n "MongoDB: "
+docker exec tracking_db mongosh --eval "db.adminCommand('ping').ok" -u root -p password --authenticationDatabase admin --quiet
+
+echo -e "\n=== Resource Usage ==="
+docker stats --no-stream --format "table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}"
+```
+
+### Emergency Restart Procedure
+
+```bash
+# 1. Stop all services gracefully
+docker-compose down -t 30
+
+# 2. Check for lingering containers
+docker ps -a
+
+# 3. Start infrastructure first
+docker-compose up -d eureka-server
+sleep 20
+
+# 4. Start databases
+docker-compose up -d order-db inventory-db tracking-db
+sleep 10
+
+# 5. Start services
+docker-compose up -d order-service inventory-service tracking-service
+sleep 15
+
+# 6. Verify health
+curl http://localhost:8761
+curl http://localhost:8090/actuator/health
+```
+
+## Getting Help
+
+If issues persist after troubleshooting:
+
+1. **Collect diagnostic information**:
+```bash
+# Save all logs
+docker-compose logs > streamline-debug-$(date +%Y%m%d-%H%M%S).log
+
+# Export environment info
+docker-compose config > docker-compose-resolved.yml
+docker version > docker-info.txt
+docker info >> docker-info.txt
+```
+
+2. **Check application logs** for stack traces and error messages
+
+3. **Review recent changes** to code, configuration, or infrastructure
+
+4. **Test in isolation** by running services individually to identify the problematic component

@@ -1,0 +1,316 @@
+---
+title: Prerequisites
+description: System requirements and prerequisites for StreamLine Logistics
+---
+
+Before setting up StreamLine Logistics, ensure your development environment meets the following requirements.
+
+## System Requirements
+
+### Hardware Requirements
+
+- **CPU**: 4+ cores recommended for running all microservices
+- **RAM**: Minimum 8GB, 16GB recommended
+- **Disk Space**: At least 5GB free space for Docker images and volumes
+
+### Operating System
+
+StreamLine Logistics supports the following operating systems:
+
+- Linux (Ubuntu 20.04+, Debian 10+, CentOS 8+)
+- macOS 11.0 (Big Sur) or later
+- Windows 10/11 with WSL2
+
+## Required Software
+
+### Java Development Kit (JDK)
+
+<Warning>
+Java 17 is required as specified in the project configuration.
+</Warning>
+
+StreamLine Logistics requires Java 17 (LTS) to build and run.
+
+<CodeGroup>
+```bash Linux (APT)
+sudo apt update
+sudo apt install openjdk-17-jdk
+
+# Verify installation
+java -version
+```
+
+```bash Linux (YUM)
+sudo yum install java-17-openjdk-devel
+
+# Verify installation
+java -version
+```
+
+```bash macOS (Homebrew)
+brew install openjdk@17
+
+# Add to PATH
+echo 'export PATH="/opt/homebrew/opt/openjdk@17/bin:$PATH"' >> ~/.zshrc
+source ~/.zshrc
+
+# Verify installation
+java -version
+```
+
+```powershell Windows
+# Download from https://adoptium.net/
+# Or use Chocolatey
+choco install temurin17
+
+# Verify installation
+java -version
+```
+</CodeGroup>
+
+### Apache Maven
+
+Maven 3.8+ is required for building the project.
+
+<CodeGroup>
+```bash Linux (APT)
+sudo apt update
+sudo apt install maven
+
+# Verify installation
+mvn -version
+```
+
+```bash macOS (Homebrew)
+brew install maven
+
+# Verify installation
+mvn -version
+```
+
+```powershell Windows (Chocolatey)
+choco install maven
+
+# Verify installation
+mvn -version
+```
+</CodeGroup>
+
+### Docker & Docker Compose
+
+<Note>
+Docker Compose V2 is recommended. The project uses `docker compose` (not `docker-compose`).
+</Note>
+
+Docker is essential for running the microservices and their dependencies.
+
+**Minimum versions:**
+- Docker Engine: 20.10+
+- Docker Compose: 2.0+
+
+<CodeGroup>
+```bash Linux (Ubuntu/Debian)
+# Install Docker
+curl -fsSL https://get.docker.com -o get-docker.sh
+sudo sh get-docker.sh
+
+# Add user to docker group
+sudo usermod -aG docker $USER
+
+# Install Docker Compose
+sudo apt install docker-compose-plugin
+
+# Verify installations
+docker --version
+docker compose version
+```
+
+```bash macOS
+# Install Docker Desktop for Mac
+brew install --cask docker
+
+# Start Docker Desktop and verify
+docker --version
+docker compose version
+```
+
+```powershell Windows
+# Install Docker Desktop for Windows
+# Download from https://www.docker.com/products/docker-desktop
+
+# Or use Chocolatey
+choco install docker-desktop
+
+# Verify installations
+docker --version
+docker compose version
+```
+</CodeGroup>
+
+### Git
+
+Git is required for version control and cloning the repository.
+
+<CodeGroup>
+```bash Linux
+sudo apt install git
+
+# Verify installation
+git --version
+```
+
+```bash macOS
+brew install git
+
+# Verify installation
+git --version
+```
+
+```powershell Windows
+choco install git
+
+# Verify installation
+git --version
+```
+</CodeGroup>
+
+## Optional Tools
+
+### IDE Recommendations
+
+<Tip>
+These IDEs provide excellent support for Spring Boot development:
+</Tip>
+
+- **IntelliJ IDEA** (Ultimate or Community Edition)
+  - Spring Boot plugin
+  - Lombok plugin
+  - MapStruct plugin
+
+- **Visual Studio Code**
+  - Spring Boot Extension Pack
+  - Java Extension Pack
+  - Lombok Annotations Support
+
+- **Eclipse**
+  - Spring Tools Suite (STS)
+  - Lombok plugin
+
+### Database Clients
+
+For direct database access and inspection:
+
+- **DBeaver** (PostgreSQL, MySQL, MongoDB)
+- **pgAdmin** (PostgreSQL)
+- **MySQL Workbench** (MySQL)
+- **MongoDB Compass** (MongoDB)
+
+### API Testing Tools
+
+- **Postman** - REST API testing
+- **Insomnia** - REST API testing
+- **curl** - Command-line HTTP client
+
+## Port Availability
+
+<Warning>
+Ensure the following ports are available before starting the services.
+</Warning>
+
+StreamLine Logistics requires the following ports to be free:
+
+| Service | Port | Purpose |
+|---------|------|----------|
+| Eureka Server | 8761 | Service discovery |
+| Config Server | 8888 | Centralized configuration |
+| Order Service | 8090 | Order management API |
+| Tracking Service | 8091 | Shipment tracking API |
+| Inventory Service | 9090 | Inventory management API |
+| PostgreSQL (Order DB) | 5432 | Order database |
+| MySQL (Inventory DB) | 3306 | Inventory database |
+| MongoDB (Tracking DB) | 27017 | Tracking database |
+
+Check port availability:
+
+<CodeGroup>
+```bash Linux/macOS
+# Check if ports are in use
+sudo lsof -i :8761
+sudo lsof -i :8090
+sudo lsof -i :8091
+sudo lsof -i :9090
+sudo lsof -i :5432
+sudo lsof -i :3306
+sudo lsof -i :27017
+```
+
+```powershell Windows
+# Check if ports are in use
+netstat -ano | findstr :8761
+netstat -ano | findstr :8090
+netstat -ano | findstr :8091
+netstat -ano | findstr :9090
+netstat -ano | findstr :5432
+netstat -ano | findstr :3306
+netstat -ano | findstr :27017
+```
+</CodeGroup>
+
+## Network Configuration
+
+### Docker Network Requirements
+
+The project uses a custom Docker bridge network named `microservices-network`. Ensure Docker networking is properly configured:
+
+```bash
+# Verify Docker networks
+docker network ls
+
+# Check Docker daemon status
+docker info
+```
+
+### Firewall Considerations
+
+If running on a server with a firewall, ensure the following ports are accessible:
+
+```bash
+# Example: UFW (Ubuntu)
+sudo ufw allow 8761/tcp
+sudo ufw allow 8090/tcp
+sudo ufw allow 8091/tcp
+sudo ufw allow 9090/tcp
+```
+
+## Verification Checklist
+
+Before proceeding with installation, verify all prerequisites:
+
+- [ ] Java 17 installed and in PATH
+- [ ] Maven 3.8+ installed
+- [ ] Docker Engine 20.10+ installed
+- [ ] Docker Compose 2.0+ available
+- [ ] Git installed
+- [ ] Required ports are available
+- [ ] At least 8GB RAM available
+- [ ] At least 5GB disk space free
+- [ ] Docker daemon is running
+
+Verify all at once:
+
+```bash
+echo "Java Version:"
+java -version
+echo "\nMaven Version:"
+mvn -version
+echo "\nDocker Version:"
+docker --version
+echo "\nDocker Compose Version:"
+docker compose version
+echo "\nGit Version:"
+git --version
+```
+
+## Next Steps
+
+Once all prerequisites are met, proceed to [Installation](/setup/installation).

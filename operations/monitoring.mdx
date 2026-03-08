@@ -1,0 +1,481 @@
+---
+title: 'Monitoring and Health Checks'
+description: 'Monitoring microservices, databases, and infrastructure health in StreamLine Logistics'
+---
+
+## Overview
+
+StreamLine Logistics implements multiple layers of monitoring through Spring Boot Actuator, Eureka service registry, and container-level health checks. This comprehensive approach ensures early detection of issues and maintains system reliability.
+
+## Spring Boot Actuator
+
+All microservices include Spring Boot Actuator for health monitoring, metrics, and operational insights.
+
+### Actuator Endpoints
+
+By default, Spring Boot Actuator exposes several endpoints:
+
+#### Order Service (Port 8090)
+
+```bash
+# Health check
+curl http://localhost:8090/actuator/health
+
+# Service information
+curl http://localhost:8090/actuator/info
+
+# Metrics
+curl http://localhost:8090/actuator/metrics
+
+# Environment properties
+curl http://localhost:8090/actuator/env
+```
+
+#### Inventory Service (Port 9090)
+
+```bash
+# Health check
+curl http://localhost:9090/actuator/health
+
+# Database health
+curl http://localhost:9090/actuator/health/db
+
+# Metrics
+curl http://localhost:9090/actuator/metrics
+```
+
+#### Tracking Service (Port 8091)
+
+```bash
+# Health check
+curl http://localhost:8091/actuator/health
+
+# MongoDB health
+curl http://localhost:8091/actuator/health/mongo
+
+# Metrics
+curl http://localhost:8091/actuator/metrics
+```
+
+### Health Check Response Format
+
+A healthy service returns:
+
+```json
+{
+  "status": "UP",
+  "components": {
+    "db": {
+      "status": "UP",
+      "details": {
+        "database": "PostgreSQL",
+        "validationQuery": "isValid()"
+      }
+    },
+    "diskSpace": {
+      "status": "UP",
+      "details": {
+        "total": 250685575168,
+        "free": 100234567890,
+        "threshold": 10485760
+      }
+    },
+    "ping": {
+      "status": "UP"
+    }
+  }
+}
+```
+
+An unhealthy service returns:
+
+```json
+{
+  "status": "DOWN",
+  "components": {
+    "db": {
+      "status": "DOWN",
+      "details": {
+        "error": "org.springframework.jdbc.CannotGetJdbcConnectionException"
+      }
+    }
+  }
+}
+```
+
+### Enabling Additional Actuator Endpoints
+
+To expose more endpoints, add to `application.yml`:
+
+```yaml
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus,env,loggers
+  endpoint:
+    health:
+      show-details: always
+      show-components: always
+  health:
+    db:
+      enabled: true
+    diskspace:
+      enabled: true
+```
+
+### Key Metrics to Monitor
+
+#### JVM Metrics
+
+```bash
+# Heap memory usage
+curl http://localhost:8090/actuator/metrics/jvm.memory.used
+
+# Garbage collection
+curl http://localhost:8090/actuator/metrics/jvm.gc.pause
+
+# Thread count
+curl http://localhost:8090/actuator/metrics/jvm.threads.live
+```
+
+#### HTTP Metrics
+
+```bash
+# HTTP request count
+curl http://localhost:8090/actuator/metrics/http.server.requests
+
+# Request duration
+curl http://localhost:8090/actuator/metrics/http.server.requests?tag=uri:/api/orders
+```
+
+#### Database Connection Pool
+
+```bash
+# Active connections
+curl http://localhost:8090/actuator/metrics/hikaricp.connections.active
+
+# Idle connections
+curl http://localhost:8090/actuator/metrics/hikaricp.connections.idle
+
+# Connection timeout
+curl http://localhost:8090/actuator/metrics/hikaricp.connections.timeout
+```
+
+## Eureka Service Registry
+
+Eureka Server provides centralized service discovery and health monitoring.
+
+### Eureka Dashboard
+
+Access the Eureka dashboard at:
+
+```
+http://localhost:8761
+```
+
+The dashboard displays:
+- Registered service instances
+- Instance status (UP/DOWN)
+- Last heartbeat time
+- Service URLs and ports
+
+### Registered Services
+
+The following services register with Eureka:
+
+- **msvc-order** (Order Service) - Port 8090
+- **msvc-inventory** (Inventory Service) - Port 9090
+- **msvc-tracking** (Tracking Service) - Port 8091
+
+### Eureka REST API
+
+```bash
+# List all registered services
+curl http://localhost:8761/eureka/apps
+
+# Get specific service instances
+curl http://localhost:8761/eureka/apps/MSVC-ORDER
+
+# Check Eureka server health
+curl http://localhost:8761/actuator/health
+```
+
+### Service Heartbeat Configuration
+
+Services send heartbeats to Eureka every 30 seconds by default:
+
+```yaml
+eureka:
+  instance:
+    lease-renewal-interval-in-seconds: 30
+    lease-expiration-duration-in-seconds: 90
+  client:
+    registry-fetch-interval-seconds: 30
+```
+
+## Container Health Monitoring
+
+### Docker Container Status
+
+```bash
+# Check all container status
+docker-compose ps
+
+# Check specific service
+docker ps --filter "name=order-service"
+
+# View container health (if health check defined)
+docker inspect --format='{{.State.Health.Status}}' order-service
+```
+
+### Container Resource Usage
+
+```bash
+# Real-time resource monitoring
+docker stats
+
+# Specific container stats
+docker stats order-service inventory-service tracking-service
+
+# One-time snapshot
+docker stats --no-stream
+```
+
+### Container Logs
+
+```bash
+# Follow logs for a service
+docker logs -f order-service
+
+# Last 100 lines
+docker logs --tail 100 order-service
+
+# Logs with timestamps
+docker logs -t order-service
+
+# Follow logs for multiple services
+docker-compose logs -f order-service inventory-service
+```
+
+## Database Health Monitoring
+
+### PostgreSQL (Order Database)
+
+```bash
+# Connection count
+docker exec order_db psql -U postgres -c "SELECT count(*) FROM pg_stat_activity;"
+
+# Active queries
+docker exec order_db psql -U postgres -c "SELECT pid, usename, application_name, state, query FROM pg_stat_activity WHERE state = 'active';"
+
+# Database size
+docker exec order_db psql -U postgres -c "SELECT pg_size_pretty(pg_database_size('orderdb'));"
+
+# Table sizes
+docker exec order_db psql -U postgres -d orderdb -c "SELECT schemaname, tablename, pg_size_pretty(pg_total_relation_size(schemaname||'.'||tablename)) FROM pg_tables WHERE schemaname = 'public' ORDER BY pg_total_relation_size(schemaname||'.'||tablename) DESC;"
+```
+
+### MySQL (Inventory Database)
+
+```bash
+# Connection count
+docker exec inventory_db mysql -uroot -ppassword -e "SHOW STATUS LIKE 'Threads_connected';"
+
+# Process list
+docker exec inventory_db mysql -uroot -ppassword -e "SHOW PROCESSLIST;"
+
+# Database size
+docker exec inventory_db mysql -uroot -ppassword -e "SELECT table_schema AS 'Database', ROUND(SUM(data_length + index_length) / 1024 / 1024, 2) AS 'Size (MB)' FROM information_schema.tables WHERE table_schema = 'inventorydb' GROUP BY table_schema;"
+
+# Table sizes
+docker exec inventory_db mysql -uroot -ppassword -e "SELECT table_name, ROUND(((data_length + index_length) / 1024 / 1024), 2) AS 'Size (MB)' FROM information_schema.tables WHERE table_schema = 'inventorydb' ORDER BY (data_length + index_length) DESC;"
+```
+
+### MongoDB (Tracking Database)
+
+```bash
+# Server status
+docker exec tracking_db mongosh -u root -p password --authenticationDatabase admin --eval "db.serverStatus()"
+
+# Connection count
+docker exec tracking_db mongosh -u root -p password --authenticationDatabase admin --eval "db.serverStatus().connections"
+
+# Database size
+docker exec tracking_db mongosh -u root -p password --authenticationDatabase admin --eval "use trakcingdb; db.stats()"
+
+# Collection statistics
+docker exec tracking_db mongosh -u root -p password --authenticationDatabase admin --eval "use trakcingdb; db.shipments.stats()"
+```
+
+## API Gateway Monitoring
+
+The API Gateway (port 8080) serves as the single entry point:
+
+```bash
+# Health check through gateway
+curl http://localhost:8080/actuator/health
+
+# Route information (if Spring Cloud Gateway)
+curl http://localhost:8080/actuator/gateway/routes
+```
+
+## Monitoring Best Practices
+
+### Health Check Endpoints
+
+Implement custom health indicators for critical dependencies:
+
+```java
+@Component
+public class InventoryServiceHealthIndicator implements HealthIndicator {
+    
+    @Autowired
+    private InventoryClient inventoryClient;
+    
+    @Override
+    public Health health() {
+        try {
+            inventoryClient.checkHealth();
+            return Health.up()
+                .withDetail("inventory-service", "Available")
+                .build();
+        } catch (Exception e) {
+            return Health.down()
+                .withDetail("inventory-service", "Unavailable")
+                .withException(e)
+                .build();
+        }
+    }
+}
+```
+
+### Automated Monitoring Script
+
+Create a monitoring script to check all services:
+
+```bash
+#!/bin/bash
+
+echo "=== StreamLine Logistics Health Check ==="
+echo ""
+
+echo "[Order Service]"
+curl -s http://localhost:8090/actuator/health | jq '.status'
+
+echo "[Inventory Service]"
+curl -s http://localhost:9090/actuator/health | jq '.status'
+
+echo "[Tracking Service]"
+curl -s http://localhost:8091/actuator/health | jq '.status'
+
+echo "[Eureka Server]"
+curl -s http://localhost:8761/actuator/health | jq '.status'
+
+echo ""
+echo "=== Database Health ==="
+
+echo "[PostgreSQL]"
+docker exec order_db pg_isready -U postgres
+
+echo "[MySQL]"
+docker exec inventory_db mysqladmin -uroot -ppassword ping
+
+echo "[MongoDB]"
+docker exec tracking_db mongosh --eval "db.adminCommand('ping')" -u root -p password --authenticationDatabase admin --quiet
+```
+
+### Alerting Thresholds
+
+Monitor these metrics and set up alerts:
+
+| Metric | Warning Threshold | Critical Threshold |
+|--------|------------------|--------------------|
+| JVM Heap Usage | > 75% | > 90% |
+| Database Connections | > 80% pool size | > 95% pool size |
+| Response Time (p95) | > 1000ms | > 3000ms |
+| Error Rate | > 1% | > 5% |
+| Disk Space | < 20% free | < 10% free |
+| CPU Usage | > 70% | > 90% |
+
+## Integration with Monitoring Tools
+
+### Prometheus Integration
+
+Add Prometheus endpoint to services:
+
+```yaml
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+```
+
+Scrape metrics:
+
+```bash
+curl http://localhost:8090/actuator/prometheus
+```
+
+### Sample Prometheus Configuration
+
+```yaml
+scrape_configs:
+  - job_name: 'order-service'
+    metrics_path: '/actuator/prometheus'
+    static_configs:
+      - targets: ['localhost:8090']
+  
+  - job_name: 'inventory-service'
+    metrics_path: '/actuator/prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+  
+  - job_name: 'tracking-service'
+    metrics_path: '/actuator/prometheus'
+    static_configs:
+      - targets: ['localhost:8091']
+```
+
+## Log Aggregation
+
+Centralize logs from all services:
+
+```bash
+# View all service logs together
+docker-compose logs -f
+
+# Filter by service
+docker-compose logs -f order-service
+
+# Search for errors
+docker-compose logs | grep -i error
+
+# Export logs to file
+docker-compose logs > streamline-logs-$(date +%Y%m%d).log
+```
+
+## Quick Health Check Commands
+
+```bash
+# All services status
+docker-compose ps
+
+# All actuator health endpoints
+curl -s http://localhost:8090/actuator/health | jq '.status' && \
+curl -s http://localhost:9090/actuator/health | jq '.status' && \
+curl -s http://localhost:8091/actuator/health | jq '.status'
+
+# Eureka registered services
+curl -s http://localhost:8761/eureka/apps | grep -o '<status>[^<]*' | cut -d'>' -f2
+
+# Database connectivity
+docker exec order_db pg_isready -U postgres && \
+docker exec inventory_db mysqladmin -uroot -ppassword ping && \
+docker exec tracking_db mongosh --eval "db.adminCommand('ping')" -u root -p password --authenticationDatabase admin --quiet
+```

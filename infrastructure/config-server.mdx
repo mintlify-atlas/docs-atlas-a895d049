@@ -1,0 +1,651 @@
+---
+title: 'Config Server'
+description: 'Spring Cloud Config Server providing centralized configuration management for StreamLine Logistics microservices'
+---
+
+## Overview
+
+The Config Server provides centralized, externalized configuration management for all microservices in the StreamLine Logistics platform. Built on Spring Cloud Config, it serves configuration files from a central repository, enabling dynamic configuration updates without service restarts.
+
+<Info>
+Config Server runs on port **8888** and provides configuration to all microservices in the platform.
+</Info>
+
+## Why Centralized Configuration?
+
+### Benefits
+
+- **Single Source of Truth**: All configuration in one place
+- **Environment-Specific Config**: Different settings for dev, staging, production
+- **Dynamic Updates**: Change configuration without rebuilding/redeploying services
+- **Version Control**: Track configuration changes using Git
+- **Security**: Centralized secrets management
+- **Consistency**: Ensure all service instances use the same configuration
+
+### Configuration Management Strategy
+
+Without Config Server:
+```
+Order Service → application.yml (embedded)
+Inventory Service → application.yml (embedded)  
+Tracking Service → application.yml (embedded)
+```
+
+With Config Server:
+```
+Config Server → Git Repository → Configuration Files
+                      ↓
+    ┌─────────────────┼─────────────────┐
+    ↓                 ↓                 ↓
+Order Service    Inventory Service  Tracking Service
+```
+
+## Configuration
+
+### Application Properties
+
+The Config Server uses minimal bootstrap configuration:
+
+```properties
+spring.application.name=microservice-config
+```
+
+### Server Configuration
+
+Typical `application.yml` for Config Server:
+
+```yaml
+server:
+  port: 8888
+
+spring:
+  application:
+    name: microservice-config
+  cloud:
+    config:
+      server:
+        git:
+          uri: https://github.com/your-org/config-repo
+          default-label: main
+          search-paths:
+            - '{application}'
+        native:
+          search-locations: classpath:/config
+```
+
+### Configuration Properties
+
+| Property | Value | Description |
+|----------|-------|-------------|
+| `server.port` | 8888 | Standard Config Server port |
+| `spring.application.name` | microservice-config | Service identifier |
+| `spring.cloud.config.server.git.uri` | Git repository URL | Source of configuration files |
+| `spring.cloud.config.server.git.default-label` | main | Default branch to use |
+
+<Note>
+Config Server supports multiple backends: Git, SVN, local filesystem, Vault, and JDBC. Git is recommended for production due to versioning and audit capabilities.
+</Note>
+
+## Spring Boot Application
+
+The Config Server requires minimal code:
+
+```java
+package com.microservice.config;
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.cloud.config.server.EnableConfigServer;
+
+@EnableConfigServer
+@SpringBootApplication
+public class MicroserviceConfigApplication {
+
+    public static void main(String[] args) {
+        SpringApplication.run(MicroserviceConfigApplication.class, args);
+    }
+}
+```
+
+The `@EnableConfigServer` annotation activates all Config Server functionality:
+- HTTP API for serving configuration
+- Git/backend integration
+- Encryption/decryption support
+- Refresh capabilities
+
+## Dependencies
+
+From `pom.xml`:
+
+```xml
+<dependencies>
+    <dependency>
+        <groupId>org.springframework.cloud</groupId>
+        <artifactId>spring-cloud-config-server</artifactId>
+    </dependency>
+</dependencies>
+
+<dependencyManagement>
+    <dependencies>
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-dependencies</artifactId>
+            <version>2025.1.0</version>
+            <type>pom</type>
+            <scope>import</scope>
+        </dependency>
+    </dependencies>
+</dependencyManagement>
+```
+
+**Spring Cloud Version**: 2025.1.0
+
+The `spring-cloud-config-server` dependency provides all necessary functionality for the Config Server.
+
+## Docker Configuration
+
+The Config Server runs as a Docker container:
+
+```yaml
+config-server:
+  container_name: config-server
+  build:
+    context: .
+    dockerfile: ./microservice-config/Dockerfile
+  image: config-server:latest
+  ports:
+    - "8888:8888"
+  networks:
+    - microservices-network
+  environment:
+    - SPRING_CLOUD_CONFIG_SERVER_GIT_URI=${CONFIG_REPO_URI}
+    - SPRING_CLOUD_CONFIG_SERVER_GIT_USERNAME=${GIT_USERNAME}
+    - SPRING_CLOUD_CONFIG_SERVER_GIT_PASSWORD=${GIT_PASSWORD}
+```
+
+<Info>
+For production deployments, use environment variables or secrets management for sensitive Git credentials.
+</Info>
+
+## Configuration Repository Structure
+
+### Git Repository Layout
+
+Recommended structure for the configuration repository:
+
+```
+config-repo/
+├── application.yml              # Global defaults for all services
+├── msvc-eureka.yml             # Eureka Server configuration
+├── msvc-eureka-dev.yml         # Eureka dev environment
+├── msvc-eureka-prod.yml        # Eureka production environment
+├── microservice-gateway.yml    # API Gateway configuration
+├── microservice-gateway-dev.yml
+├── microservice-gateway-prod.yml
+├── msvc-order.yml              # Order Service configuration
+├── msvc-order-dev.yml
+├── msvc-order-prod.yml
+├── msvc-inventory.yml          # Inventory Service configuration
+├── msvc-inventory-dev.yml
+├── msvc-inventory-prod.yml
+├── msvc-tracking.yml           # Tracking Service configuration
+├── msvc-tracking-dev.yml
+└── msvc-tracking-prod.yml
+```
+
+### Configuration Priority
+
+Config Server applies configuration in this order (highest to lowest priority):
+
+1. `{application}-{profile}.yml` (e.g., `msvc-order-prod.yml`)
+2. `{application}.yml` (e.g., `msvc-order.yml`)
+3. `application-{profile}.yml` (e.g., `application-prod.yml`)
+4. `application.yml` (global defaults)
+
+### Example Configuration File
+
+**application.yml** (global defaults):
+
+```yaml
+# Global configuration for all services
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+
+logging:
+  level:
+    root: INFO
+    com.microservice: DEBUG
+
+eureka:
+  instance:
+    hostname: eureka-server
+    prefer-ip-address: true
+  client:
+    service-url:
+      defaultZone: http://${eureka.instance.hostname}:8761/eureka/
+```
+
+**msvc-order.yml** (Order Service specific):
+
+```yaml
+spring:
+  datasource:
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    database: postgresql
+
+server:
+  port: 8090
+```
+
+**msvc-order-prod.yml** (Order Service production):
+
+```yaml
+spring:
+  datasource:
+    url: jdbc:postgresql://prod-order-db:5432/orderdb
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+  jpa:
+    show-sql: false
+
+logging:
+  level:
+    com.microservice: INFO
+```
+
+## Client Integration
+
+### How Services Connect to Config Server
+
+Microservices connect to Config Server during startup. From the Eureka Server `application.yml`:
+
+```yaml
+spring:
+  application:
+    name: msvc-eureka
+  config:
+    import: "optional:configserver:http://localhost:8888"
+```
+
+### Client Dependencies
+
+Services need the Config Client dependency:
+
+```xml
+<dependency>
+    <groupId>org.springframework.cloud</groupId>
+    <artifactId>spring-cloud-starter-config</artifactId>
+</dependency>
+```
+
+### Bootstrap Configuration
+
+Clients can use `bootstrap.yml` for early configuration loading:
+
+```yaml
+spring:
+  application:
+    name: msvc-order
+  profiles:
+    active: dev
+  cloud:
+    config:
+      uri: http://config-server:8888
+      fail-fast: true
+      retry:
+        initial-interval: 1000
+        max-attempts: 6
+```
+
+<Note>
+The `optional:` prefix allows services to start even if Config Server is unavailable, using local configuration as fallback. Remove `optional:` to make Config Server mandatory.
+</Note>
+
+## HTTP API
+
+### Accessing Configuration
+
+Config Server exposes configuration via REST endpoints:
+
+```
+GET /{application}/{profile}[/{label}]
+GET /{application}-{profile}.yml
+GET /{application}-{profile}.properties
+GET /{label}/{application}-{profile}.yml
+```
+
+### Example Requests
+
+**Get Order Service dev configuration:**
+```bash
+curl http://localhost:8888/msvc-order/dev
+```
+
+**Response:**
+```json
+{
+  "name": "msvc-order",
+  "profiles": ["dev"],
+  "label": null,
+  "version": "a1b2c3d4",
+  "state": null,
+  "propertySources": [
+    {
+      "name": "https://github.com/org/config-repo/msvc-order-dev.yml",
+      "source": {
+        "spring.datasource.url": "jdbc:postgresql://localhost:5432/orderdb",
+        "server.port": 8090
+      }
+    }
+  ]
+}
+```
+
+**Get configuration as YAML:**
+```bash
+curl http://localhost:8888/msvc-order-dev.yml
+```
+
+**Get specific Git branch/tag:**
+```bash
+curl http://localhost:8888/main/msvc-order-dev.yml
+```
+
+## Dynamic Configuration Refresh
+
+### Refresh Endpoint
+
+Services can refresh configuration without restart using Spring Cloud Bus or manual refresh:
+
+**Enable refresh in client service:**
+```java
+@RefreshScope
+@RestController
+public class OrderController {
+    
+    @Value("${order.max-items}")
+    private int maxItems;
+    
+    // Configuration will be refreshed when /actuator/refresh is called
+}
+```
+
+**Trigger refresh:**
+```bash
+curl -X POST http://localhost:8090/actuator/refresh
+```
+
+### Automatic Refresh with Spring Cloud Bus
+
+For automatic refresh across all instances:
+
+1. Add Spring Cloud Bus dependency
+2. Configure message broker (RabbitMQ or Kafka)
+3. Call `/monitor` endpoint on Config Server
+4. All services automatically refresh
+
+## Security
+
+### Encrypting Sensitive Data
+
+Config Server supports encryption for sensitive properties:
+
+**Install JCE (Java Cryptography Extension):**
+```yaml
+encrypt:
+  key: your-encryption-key
+```
+
+**Encrypt a value:**
+```bash
+curl http://localhost:8888/encrypt -d "secret-password"
+# Returns: AQA1234abcd...
+```
+
+**Use in configuration:**
+```yaml
+spring:
+  datasource:
+    password: '{cipher}AQA1234abcd...'
+```
+
+Config Server automatically decrypts `{cipher}` prefixed values before serving to clients.
+
+### Git Authentication
+
+**HTTPS with credentials:**
+```yaml
+spring:
+  cloud:
+    config:
+      server:
+        git:
+          uri: https://github.com/your-org/config-repo
+          username: ${GIT_USERNAME}
+          password: ${GIT_TOKEN}
+```
+
+**SSH with private key:**
+```yaml
+spring:
+  cloud:
+    config:
+      server:
+        git:
+          uri: git@github.com:your-org/config-repo.git
+          private-key: |
+            -----BEGIN RSA PRIVATE KEY-----
+            ...
+            -----END RSA PRIVATE KEY-----
+```
+
+### Securing Config Server Endpoints
+
+Protect Config Server with Spring Security:
+
+```xml
+<dependency>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-security</artifactId>
+</dependency>
+```
+
+```java
+@Configuration
+public class SecurityConfig {
+    
+    @Bean
+    public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+        http
+            .authorizeHttpRequests(auth -> auth
+                .anyRequest().authenticated())
+            .httpBasic();
+        return http.build();
+    }
+}
+```
+
+Clients must provide credentials:
+```yaml
+spring:
+  cloud:
+    config:
+      uri: http://config-server:8888
+      username: config-user
+      password: config-password
+```
+
+## Native Profile (Development)
+
+For local development without Git:
+
+```yaml
+spring:
+  profiles:
+    active: native
+  cloud:
+    config:
+      server:
+        native:
+          search-locations: classpath:/config,file:./config
+```
+
+Store configuration files locally:
+```
+src/main/resources/config/
+├── application.yml
+├── msvc-order.yml
+└── msvc-inventory.yml
+```
+
+## Monitoring and Health
+
+### Actuator Endpoints
+
+```yaml
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,env,refresh
+```
+
+Key endpoints:
+- `/actuator/health` - Config Server health
+- `/actuator/env` - Environment properties
+- `/actuator/refresh` - Refresh configuration from Git
+
+### Health Indicators
+
+Config Server health includes:
+- Git repository connectivity
+- Disk space for local cache
+- Application status
+
+## Troubleshooting
+
+### Service Can't Connect to Config Server
+
+**Symptoms:** Service fails to start, connection refused errors
+
+**Solutions:**
+1. Verify Config Server is running: `docker ps | grep config-server`
+2. Check network connectivity to port 8888
+3. Review client configuration for correct `spring.config.import` URL
+4. Use `optional:` prefix to allow startup without Config Server
+
+### Configuration Not Updating
+
+**Symptoms:** Services use old configuration values
+
+**Solutions:**
+1. Verify configuration committed and pushed to Git
+2. Call `/actuator/refresh` on client service
+3. Check Config Server logs for Git fetch errors
+4. Clear Config Server's local Git cache
+5. Verify `@RefreshScope` annotation on beans using dynamic config
+
+### Git Authentication Failures
+
+**Symptoms:** Config Server can't fetch from repository
+
+**Solutions:**
+1. Verify Git credentials are correct
+2. Check repository URL and branch name
+3. For private repos, ensure access token has read permissions
+4. Review Config Server logs for authentication errors
+5. Test Git access manually: `git clone <repo-url>`
+
+### Decryption Failures
+
+**Symptoms:** `{cipher}` values not decrypted, appear as-is in clients
+
+**Solutions:**
+1. Verify encryption key configured on Config Server
+2. Ensure JCE is installed
+3. Check encrypted values format: `{cipher}...`
+4. Test encryption: `curl http://localhost:8888/encrypt -d "test"`
+5. Test decryption: `curl http://localhost:8888/decrypt -d "{cipher-text}"`
+
+## Best Practices
+
+<Note>
+- **Use Git for Production**: Provides version control and audit trail
+- **Separate Repositories**: Consider separate repos for different environments
+- **Encrypt Secrets**: Always encrypt passwords, API keys, and sensitive data
+- **Profile per Environment**: Use dev, staging, prod profiles
+- **Global Defaults**: Put common config in `application.yml`
+- **Document Configuration**: Add comments explaining each property
+- **Test Config Changes**: Validate configuration before committing
+- **Monitor Git Repository**: Set up alerts for unauthorized changes
+</Note>
+
+## Configuration Examples for StreamLine Services
+
+### Eureka Server Config
+
+As seen in the actual source (`microservice-eureka/application.yml`):
+
+```yaml
+server:
+  port: 8761
+
+spring:
+  application:
+    name: msvc-eureka
+  config:
+    import: "optional:configserver:http://localhost:8888"
+
+eureka:
+  instance:
+    hostname: eureka-server
+  client:
+    register-with-eureka: false
+    fetch-registry: false
+    server-url:
+      defaultZone: http://${eureka.instance.hostname}:${server.port}/eureka/
+```
+
+### Order Service Config
+
+From `microservice-order/application.yml`:
+
+```yaml
+server:
+  port: 8090
+
+spring:
+  application:
+    name: msvc-order
+  datasource:
+    driver-class-name: org.postgresql.Driver
+    url: jdbc:postgresql://order_db:5432/orderdb
+    username: postgres
+    password: password
+  jpa:
+    hibernate:
+      ddl-auto: create
+    database: postgresql
+  config:
+    import: "optional:configserver:http://localhost:8888"
+
+eureka:
+  instance:
+    hostname: eureka-server
+  client:
+    service-url:
+      defaultZone: http://${eureka.instance.hostname}:8761/eureka/
+```
+
+These configurations can be externalized to the Config Server for centralized management across environments.
+
+## Related Services
+
+- [Eureka Server](/infrastructure/eureka-server) - Service discovery, uses Config Server for centralized config
+- [API Gateway](/infrastructure/api-gateway) - Gateway routing, can load routes from Config Server

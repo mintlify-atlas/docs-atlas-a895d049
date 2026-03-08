@@ -1,0 +1,590 @@
+---
+title: 'Tracking Service'
+description: 'Shipment tracking and event management with MongoDB'
+icon: 'location-dot'
+---
+
+## Overview
+
+The Tracking Service records the complete lifecycle of shipments from warehouse departure to final delivery. It provides real-time tracking capabilities and stores diverse event data using MongoDB's flexible schema.
+
+<Info>
+  **Port:** 8091 | **Database:** MongoDB (trackingdb) | **Eureka Name:** msvc-tracking
+</Info>
+
+## Responsibilities
+
+<CardGroup cols={2}>
+  <Card title="Shipment Creation" icon="plus">
+    Initialize tracking records when Order Service confirms orders
+  </Card>
+  <Card title="Event Recording" icon="clock">
+    Track shipment events (departed, in transit, customs, delivered)
+  </Card>
+  <Card title="Tracking Number Generation" icon="hashtag">
+    Generate unique UUID-based tracking numbers for customers
+  </Card>
+  <Card title="Real-Time Updates" icon="satellite-dish">
+    Provide current shipment status and location information
+  </Card>
+</CardGroup>
+
+## Why MongoDB (NoSQL)?
+
+MongoDB was specifically chosen for the Tracking Service due to its unique requirements:
+
+<AccordionGroup>
+  <Accordion title="Schema-less Design">
+    Different shipping events require different data:
+    - **Departure**: Warehouse location, carrier info
+    - **In Transit**: GPS coordinates, current location
+    - **Customs**: Customs declaration number, inspection notes
+    - **Delivery**: Delivery photo, recipient signature, timestamp
+    - **Exception**: Weather delay info, traffic data, incident reports
+
+    With MongoDB, you can store heterogeneous events without ALTER TABLE migrations. Each event can have its own unique fields.
+  </Accordion>
+
+  <Accordion title="Flexible Event Data">
+    Events are stored as an embedded array, allowing unlimited event history without JOIN operations:
+
+    ```javascript
+    {
+      _id: ObjectId("..."),
+      orderId: 789,
+      trackingNumber: "TRK-f47ac10b-58cc-4372-a567-0e02b2c3d479",
+      events: [
+        {
+          status: "Departed",
+          timestamp: ISODate("2026-03-08T10:00:00Z"),
+          location: "Warehouse A",
+          details: "Package picked up"
+        },
+        {
+          status: "In Transit",
+          timestamp: ISODate("2026-03-08T14:30:00Z"),
+          location: "Distribution Center",
+          gpsCoordinates: { lat: 40.7128, lng: -74.0060 },
+          vehicleId: "TRUCK-456"
+        },
+        {
+          status: "Delivered",
+          timestamp: ISODate("2026-03-09T11:15:00Z"),
+          location: "Customer Address",
+          deliveryPhoto: "https://cdn.example.com/proof-123.jpg",
+          recipientSignature: "base64encodedimage...",
+          recipientName: "John Doe"
+        }
+      ]
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="High Write Throughput">
+    Tracking events are write-heavy (constant status updates). MongoDB excels at:
+    - High-frequency writes (event appending)
+    - No complex relationships or JOINs required
+    - Natural fit for event sourcing patterns
+    - Horizontal scaling for high-volume tracking data
+  </Accordion>
+
+  <Accordion title="Document-Oriented Model">
+    The entire shipment with all its events is a single document, eliminating:
+    - Complex JOIN queries
+    - N+1 query problems
+    - Foreign key constraints
+    - Normalization overhead
+  </Accordion>
+</AccordionGroup>
+
+<Warning>
+  **Not for Transactions**: MongoDB (in this setup) is used for event logging, not transactional data. Critical order state lives in Order Service (PostgreSQL).
+</Warning>
+
+## Domain Model
+
+### Shipment Document (MongoDB Collection)
+
+Based on the technical specification:
+
+```javascript
+// MongoDB document structure
+{
+  _id: ObjectId("65f9b2c4d1e2f3a4b5c6d7e8"),
+  orderId: 789,                           // Reference to Order Service
+  trackingNumber: "TRK-UUID",            // Customer-facing tracking code
+  carrier: "DHL",                        // Shipping carrier
+  estimatedDelivery: ISODate("2026-03-10T00:00:00Z"),
+  currentStatus: "In Transit",
+  events: [
+    {
+      status: "Warehouse Departure",
+      timestamp: ISODate("2026-03-08T10:00:00Z"),
+      location: "Distribution Center - East",
+      details: "Package sorted and loaded"
+    },
+    {
+      status: "In Transit",
+      timestamp: ISODate("2026-03-08T14:30:00Z"),
+      location: "Highway 95 North",
+      gpsCoordinates: { 
+        latitude: 40.7128, 
+        longitude: -74.0060 
+      },
+      vehicleId: "TRUCK-456",
+      driverName: "Mike Johnson"
+    },
+    {
+      status: "Customs Clearance",
+      timestamp: ISODate("2026-03-08T18:00:00Z"),
+      location: "International Border - Port 12",
+      customsDeclaration: "DEC-2026-12345",
+      inspectionNotes: "Standard inspection completed"
+    },
+    {
+      status: "Out for Delivery",
+      timestamp: ISODate("2026-03-09T08:00:00Z"),
+      location: "Local Distribution Hub",
+      details: "Assigned to delivery route 42"
+    },
+    {
+      status: "Delivered",
+      timestamp: ISODate("2026-03-09T11:15:00Z"),
+      location: "123 Main St, Customer Address",
+      deliveryProof: {
+        recipientName: "John Doe",
+        signature: "data:image/png;base64,...",
+        photo: "https://cdn.tracking.com/proof/789-delivered.jpg"
+      },
+      weatherCondition: "Sunny, 72°F"
+    }
+  ]
+}
+```
+
+### Java Domain Model
+
+```java
+package com.microservice.tracking.domain.model;
+
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.UUID;
+
+/**
+ * Shipment aggregate root.
+ * Manages tracking events and shipment lifecycle.
+ */
+public class Shipment {
+    private String id;                          // MongoDB ObjectId
+    private Long orderId;
+    private String trackingNumber;
+    private String carrier;
+    private LocalDateTime estimatedDelivery;
+    private String currentStatus;
+    private List<TrackingEvent> events;
+
+    public Shipment(Long orderId, String carrier, 
+                   LocalDateTime estimatedDelivery) {
+        this.orderId = orderId;
+        this.trackingNumber = generateTrackingNumber();
+        this.carrier = carrier;
+        this.estimatedDelivery = estimatedDelivery;
+        this.currentStatus = "Created";
+        this.events = new ArrayList<>();
+        
+        // Add initial event
+        addEvent(new TrackingEvent(
+            "Created", 
+            LocalDateTime.now(), 
+            "System", 
+            "Shipment record created"
+        ));
+    }
+
+    /**
+     * Add a new tracking event.
+     * Updates current status to match latest event.
+     */
+    public void addEvent(TrackingEvent event) {
+        this.events.add(event);
+        this.currentStatus = event.getStatus();
+    }
+
+    /**
+     * Generate unique tracking number using UUID.
+     */
+    private String generateTrackingNumber() {
+        return "TRK-" + UUID.randomUUID().toString();
+    }
+
+    public boolean isDelivered() {
+        return "Delivered".equalsIgnoreCase(currentStatus);
+    }
+
+    // Getters...
+}
+```
+
+### Tracking Event Value Object
+
+```java
+package com.microservice.tracking.domain.model;
+
+import java.time.LocalDateTime;
+import java.util.Map;
+
+/**
+ * Represents a single tracking event.
+ * Flexible structure allows different events to carry different data.
+ */
+public class TrackingEvent {
+    private String status;
+    private LocalDateTime timestamp;
+    private String location;
+    private String details;
+    private Map<String, Object> metadata;  // Flexible additional data
+
+    public TrackingEvent(String status, LocalDateTime timestamp,
+                        String location, String details) {
+        this.status = status;
+        this.timestamp = timestamp;
+        this.location = location;
+        this.details = details;
+        this.metadata = new HashMap<>();
+    }
+
+    /**
+     * Add custom metadata (GPS, photos, signatures, etc.)
+     */
+    public void addMetadata(String key, Object value) {
+        this.metadata.put(key, value);
+    }
+
+    // Getters...
+}
+```
+
+## Expected API Endpoints
+
+Base URL: `http://localhost:8091/api/v1/tracking`
+
+<AccordionGroup>
+  <Accordion title="POST /shipment - Create Shipment">
+    Called by Order Service to initialize tracking for a new order.
+
+    **Request Body:**
+    ```json
+    {
+      "orderId": 789,
+      "carrier": "DHL",
+      "estimatedDelivery": "2026-03-10",
+      "customerName": "John Doe",
+      "deliveryAddress": "123 Main St, City, State"
+    }
+    ```
+
+    **Response (201 Created):**
+    ```json
+    {
+      "trackingNumber": "TRK-f47ac10b-58cc-4372-a567-0e02b2c3d479",
+      "orderId": 789,
+      "carrier": "DHL",
+      "currentStatus": "Created",
+      "estimatedDelivery": "2026-03-10T00:00:00"
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="GET /{trackingNumber} - Get Shipment Status">
+    Public endpoint for customers to track their shipments.
+
+    **Response:**
+    ```json
+    {
+      "trackingNumber": "TRK-f47ac10b-58cc-4372-a567-0e02b2c3d479",
+      "orderId": 789,
+      "carrier": "DHL",
+      "currentStatus": "In Transit",
+      "estimatedDelivery": "2026-03-10T00:00:00",
+      "events": [
+        {
+          "status": "Warehouse Departure",
+          "timestamp": "2026-03-08T10:00:00",
+          "location": "Distribution Center - East",
+          "details": "Package sorted and loaded"
+        },
+        {
+          "status": "In Transit",
+          "timestamp": "2026-03-08T14:30:00",
+          "location": "Highway 95 North",
+          "gpsCoordinates": {
+            "latitude": 40.7128,
+            "longitude": -74.0060
+          }
+        }
+      ]
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="POST /{trackingNumber}/event - Add Tracking Event">
+    Called by shipping systems or warehouse staff to update shipment status.
+
+    **Request Body:**
+    ```json
+    {
+      "status": "Delivered",
+      "location": "Customer Address",
+      "details": "Package delivered to recipient",
+      "metadata": {
+        "recipientName": "John Doe",
+        "signature": "data:image/png;base64,...",
+        "photo": "https://cdn.example.com/delivery-proof.jpg"
+      }
+    }
+    ```
+
+    **Response:** 204 No Content
+  </Accordion>
+
+  <Accordion title="GET /order/{orderId} - Get Tracking by Order ID">
+    Internal endpoint for Order Service to retrieve tracking info.
+
+    **Response:**
+    ```json
+    {
+      "trackingNumber": "TRK-f47ac10b-58cc-4372-a567-0e02b2c3d479",
+      "currentStatus": "In Transit",
+      "lastUpdate": "2026-03-08T14:30:00"
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Database Configuration
+
+```yaml
+server:
+  port: 8091
+
+mongodb:
+  user: root
+  password: password
+  database: trackingdb
+
+spring:
+  application:
+    name: msvc-tracking
+  data:
+    mongodb:
+      uri: mongodb://${mongodb.user}:${mongodb.password}@localhost:27017/${mongodb.database}
+  config:
+    import: "optional:configserver:http://localhost:8888"
+
+eureka:
+  instance:
+    hostname: eureka-server
+  client:
+    service-url:
+      defaultZone: http://${eureka.instance.hostname}:8761/eureka/
+```
+
+<Info>
+  The service connects to MongoDB running in Docker container `tracking_db` on port 27017.
+</Info>
+
+## MongoDB Repository Pattern
+
+### Repository Interface
+
+```java
+package com.microservice.tracking.infrastructure.persistence;
+
+import org.springframework.data.mongodb.repository.MongoRepository;
+import com.microservice.tracking.domain.model.Shipment;
+
+import java.util.Optional;
+
+/**
+ * Spring Data MongoDB repository.
+ */
+public interface ShipmentRepository extends MongoRepository<Shipment, String> {
+    
+    Optional<Shipment> findByTrackingNumber(String trackingNumber);
+    
+    Optional<Shipment> findByOrderId(Long orderId);
+    
+    List<Shipment> findByCarrier(String carrier);
+    
+    List<Shipment> findByCurrentStatus(String status);
+}
+```
+
+### Document Mapping
+
+```java
+package com.microservice.tracking.infrastructure.persistence;
+
+import org.springframework.data.annotation.Id;
+import org.springframework.data.mongodb.core.mapping.Document;
+import org.springframework.data.mongodb.core.index.Indexed;
+
+import java.time.LocalDateTime;
+import java.util.List;
+
+/**
+ * MongoDB document entity for shipments.
+ */
+@Document(collection = "shipments")
+public class ShipmentDocument {
+    
+    @Id
+    private String id;
+    
+    @Indexed(unique = true)
+    private Long orderId;
+    
+    @Indexed(unique = true)
+    private String trackingNumber;
+    
+    private String carrier;
+    private LocalDateTime estimatedDelivery;
+    private String currentStatus;
+    private List<TrackingEventDocument> events;
+    
+    // Nested document for events
+    public static class TrackingEventDocument {
+        private String status;
+        private LocalDateTime timestamp;
+        private String location;
+        private String details;
+        private Map<String, Object> metadata;
+    }
+    
+    // Getters/setters...
+}
+```
+
+## Event Aggregation
+
+MongoDB's aggregation framework enables powerful event analytics:
+
+```java
+/**
+ * Get average delivery time by carrier.
+ */
+public Map<String, Double> getAverageDeliveryTimesByCarrier() {
+    Aggregation aggregation = Aggregation.newAggregation(
+        match(Criteria.where("currentStatus").is("Delivered")),
+        project()
+            .and("carrier").as("carrier")
+            .and("events").as("events"),
+        unwind("events"),
+        match(Criteria.where("events.status").is("Delivered")),
+        group("carrier")
+            .avg("events.timestamp").as("avgDeliveryTime")
+    );
+    
+    return mongoTemplate.aggregate(
+        aggregation, "shipments", Document.class)
+        .getMappedResults();
+}
+```
+
+## Architecture Pattern
+
+```text
+com.microservice.tracking/
+├── domain/
+│   ├── model/
+│   │   ├── Shipment.java
+│   │   └── TrackingEvent.java
+│   └── exception/
+│       └── DomainException.java
+├── application/
+│   ├── port/
+│   │   ├── input/
+│   │   │   ├── CreateShipmentUseCase.java
+│   │   │   └── AddTrackingEventUseCase.java
+│   │   └── output/
+│   │       └── ShipmentRepository.java
+│   └── service/
+│       ├── CreateShipmentService.java
+│       └── TrackingEventService.java
+└── infrastructure/
+    ├── adapter/
+    │   ├── input/
+    │   │   └── rest/
+    │   │       └── TrackingController.java
+    │   └── output/
+    │       └── persistence/
+    │           ├── ShipmentDocument.java
+    │           ├── MongoShipmentRepository.java
+    │           └── ShipmentRepositoryAdapter.java
+    └── config/
+        └── MongoConfig.java
+```
+
+## Real-Time Tracking Features
+
+<CardGroup cols={2}>
+  <Card title="Event Streaming" icon="stream">
+    Implement WebSocket or Server-Sent Events for real-time status updates to customer dashboards.
+  </Card>
+
+  <Card title="Geolocation" icon="map-location-dot">
+    Store GPS coordinates in event metadata to display package location on maps.
+  </Card>
+
+  <Card title="Delivery Proof" icon="camera">
+    Store delivery photos and signatures as part of delivered event metadata.
+  </Card>
+
+  <Card title="Analytics" icon="chart-line">
+    Use MongoDB aggregation to analyze delivery performance by carrier, region, or time period.
+  </Card>
+</CardGroup>
+
+## Benefits of MongoDB for Tracking
+
+<Check>**Schema Evolution**: Add new event types without database migrations</Check>
+<Check>**Performance**: Single document read provides entire shipment history</Check>
+<Check>**Scalability**: Horizontal sharding for high-volume tracking data</Check>
+<Check>**Flexibility**: Different events can have completely different metadata</Check>
+<Check>**Developer Experience**: JSON-like documents match application data structures</Check>
+
+## Future Enhancements
+
+<CardGroup cols={2}>
+  <Card title="Event Sourcing" icon="code-branch">
+    Implement full event sourcing with event replay capabilities.
+  </Card>
+
+  <Card title="Change Streams" icon="satellite-dish">
+    Use MongoDB Change Streams to push real-time updates to clients.
+  </Card>
+
+  <Card title="Time-Series Data" icon="clock">
+    Utilize MongoDB time-series collections for IoT sensor data from delivery vehicles.
+  </Card>
+
+  <Card title="Search Integration" icon="magnifying-glass">
+    Add Atlas Search for full-text search across event details and metadata.
+  </Card>
+</CardGroup>
+
+## Related Services
+
+<CardGroup cols={3}>
+  <Card title="Order Service" icon="file-invoice" href="/microservices/order-service">
+    Calls Tracking Service to initialize shipments
+  </Card>
+  <Card title="Inventory Service" icon="boxes-stacked" href="/microservices/inventory-service">
+    Triggered when stock is confirmed for shipping
+  </Card>
+  <Card title="Architecture Overview" icon="sitemap" href="/microservices/overview">
+    Learn about the overall system design
+  </Card>
+</CardGroup>
