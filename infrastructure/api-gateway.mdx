@@ -7,8 +7,12 @@ description: 'Spring Cloud Gateway providing unified entry point and routing for
 
 The API Gateway serves as the single entry point for all external requests to the StreamLine Logistics platform. Built with Spring Cloud Gateway, it provides request routing, load balancing, security, and cross-cutting concerns for the microservices architecture.
 
+<Note>
+**Development Status**: The API Gateway module exists in the codebase but is not yet included in the docker-compose.yml deployment. Currently, microservices can be accessed directly on their respective ports.
+</Note>
+
 <Info>
-The API Gateway runs on port **8080** and routes all incoming traffic to the appropriate backend microservices.
+The API Gateway is designed to run on port **8080** and route all incoming traffic to the appropriate backend microservices.
 </Info>
 
 ## Architecture Role

@@ -127,11 +127,11 @@ Records the complete lifecycle of each package with detailed event tracking.
 
 ## Infrastructure Services
 
-### Config Server (Port 8888)
-Centralizes configuration in YAML files, enabling dynamic configuration updates without redeployment.
-
 ### Eureka Server (Port 8761)
-Service registry that enables dynamic service discovery. Microservices register themselves on startup and discover other services through Eureka.
+Service registry that enables dynamic service discovery. Microservices register themselves on startup and discover other services through Eureka. **Currently deployed in docker-compose.**
+
+### Config Server (Port 8888)
+Centralizes configuration in YAML files, enabling dynamic configuration updates without redeployment. **Module exists but not yet in docker-compose deployment.**
 
 ### API Gateway (Port 8080)
 Single external access point that handles:
@@ -139,6 +139,8 @@ Single external access point that handles:
 - Security and authentication
 - Load balancing
 - Rate limiting
+
+**Module exists but not yet in docker-compose deployment.**
 
 ## Next Steps
 

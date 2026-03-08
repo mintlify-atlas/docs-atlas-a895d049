@@ -139,16 +139,21 @@ Before you begin, ensure you have the following installed:
 
 All services are accessible on the following ports:
 
-| Service | Port | URL |
-|---------|------|-----|
-| Eureka Server | 8761 | http://localhost:8761 |
-| API Gateway | 8080 | http://localhost:8080 |
-| Order Service | 8090 | http://localhost:8090 |
-| Inventory Service | 9090 | http://localhost:9090 |
-| Tracking Service | 8091 | http://localhost:8091 |
-| PostgreSQL (Orders) | 5432 | localhost:5432 |
-| MySQL (Inventory) | 3306 | localhost:3306 |
-| MongoDB (Tracking) | 27017 | localhost:27017 |
+| Service | Port | URL | Status |
+|---------|------|-----|--------|
+| Eureka Server | 8761 | http://localhost:8761 | ✅ Active |
+| Order Service | 8090 | http://localhost:8090 | ✅ Active |
+| Inventory Service | 9090 | http://localhost:9090 | ✅ Active |
+| Tracking Service | 8091 | http://localhost:8091 | ✅ Active |
+| PostgreSQL (Orders) | 5432 | localhost:5432 | ✅ Active |
+| MySQL (Inventory) | 3306 | localhost:3306 | ✅ Active |
+| MongoDB (Tracking) | 27017 | localhost:27017 | ✅ Active |
+| API Gateway | 8080 | http://localhost:8080 | ⚠️ Not in docker-compose |
+| Config Server | 8888 | http://localhost:8888 | ⚠️ Not in docker-compose |
+
+<Note>
+The API Gateway and Config Server modules exist in the codebase but are not yet included in the docker-compose.yml deployment. Services can be accessed directly on their respective ports.
+</Note>
 
 ## Database Connections
 

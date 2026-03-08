@@ -7,8 +7,12 @@ description: 'Spring Cloud Config Server providing centralized configuration man
 
 The Config Server provides centralized, externalized configuration management for all microservices in the StreamLine Logistics platform. Built on Spring Cloud Config, it serves configuration files from a central repository, enabling dynamic configuration updates without service restarts.
 
+<Note>
+**Development Status**: The Config Server module exists in the codebase but is not yet included in the docker-compose.yml deployment. Services currently use local `application.yml` files with optional config server integration via `spring.config.import`.
+</Note>
+
 <Info>
-Config Server runs on port **8888** and provides configuration to all microservices in the platform.
+Config Server is designed to run on port **8888** and provide configuration to all microservices in the platform.
 </Info>
 
 ## Why Centralized Configuration?
